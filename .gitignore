@@ -127,3 +127,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# scobility stuff
+itl_data/
+itl_2022-06-27-07.tar.gz

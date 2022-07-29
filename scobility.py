@@ -4,6 +4,7 @@ import json
 import glob
 import os
 from functools import reduce
+from xml.dom import NotFoundErr
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -158,6 +159,9 @@ class Player:
         cls.e_id = data['e_id']
         cls.g_id = data['g_id']
 
+    def __str__(self):
+        return f'{self.name} (#{self.e_id})'
+
 
 class Relationship:
     SCORE_SCALAR = 0.0001
@@ -245,8 +249,8 @@ class Relationship:
         z = np.sort(np.vstack((x_col, y_col)), axis=-1)
         
         # slope of line thru 0 as a starting point?
-        a = z[0, :]
-        b = z[1, :]
+        a = x_col
+        b = y_col
         w = 1 - 1/(a + Relationship.WEIGHT_OFFSET)**2
         p = np.vstack([a])
         coefs, resid = np.linalg.lstsq(p.T * w[:, np.newaxis], b * w, rcond=None)[:2]
@@ -551,12 +555,15 @@ class Tournament:
 
 
 
-if __name__ == '__main__':
+def process_itl():
     itl = Tournament()
 
     # https://github.com/G-Wen/itl_history
     print('========================================================================')
     print('=== Loading data...')
+
+    if not os.path.exists('itl_data'):
+        raise FileNotFoundError('ITL tournament data scrape needs to be unpacked to /itl_data!')
 
     # Song info
     song_files = glob.glob('itl_data/song_info/*.json')
@@ -610,4 +617,10 @@ if __name__ == '__main__':
 
     print('========================================================================')
     print('=== Done!')
+
+    return itl
+
+
+if __name__ == '__main__':
+    process_itl()
     
