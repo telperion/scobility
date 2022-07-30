@@ -14,6 +14,10 @@ from dataclasses import dataclass, field
 from typing import List
 from copy import deepcopy
 
+
+_VERBAL = False
+_VISUAL = False
+
 class Clear(IntEnum):
     PASS = 0
     FC = 1
@@ -23,6 +27,8 @@ class Clear(IntEnum):
 
 @dataclass
 class Score:
+    SCORE_SCALAR = 0.0001
+
     s_id: int = -1
     e_id: int = -1
     clear: Clear = Clear.PASS
@@ -89,6 +95,7 @@ class Song:
     meter: float = 0
     slot: str = 'Challenge'
     scores: dict = field(default_factory=dict)      # e_id: Score
+    scobility: float = None
 
     def __init__(self, data: dict):
         self.s_id = data['song_id']
@@ -107,6 +114,7 @@ class Song:
         self.slot = data['song_difficulty']
 
         self.scores = {}
+        self.scobility = None
 
     def dump(self):
         return {
@@ -116,7 +124,8 @@ class Song:
             'subtitle': self.subtitle,
             'artist': self.artist,
             'meter': self.meter,
-            'slot': self.slot
+            'slot': self.slot,
+            'scobility': self.scobility
         }
 
     @classmethod
@@ -128,9 +137,13 @@ class Song:
         cls.artist = data['artist']
         cls.meter = data['meter']
         cls.slot = data['slot']
+        cls.scobility = data['scobility']
 
     def __str__(self):
-        return f"#{self.s_id} {self.title} ({self.slot} {self.meter})"
+        if self.scobility:
+            return f"#{self.s_id} {self.title} ({self.slot} {self.meter}, {np.log2(self.scobility):0.3f}🌶)"
+        else:
+            return f"#{self.s_id} {self.title} ({self.slot} {self.meter})"
 
 
 @dataclass
@@ -140,17 +153,24 @@ class Player:
     g_id: int = -1
     scores: dict = field(default_factory=dict)      # s_id: Score
 
+    scobility: float = None
+    comfort_zone: float = None    
+
     def __init__(self, data: dict):
         self.name = data['members_name']
         self.e_id = data['entrant_id']
         self.g_id = data['entrant_members_id']
         self.scores = {}
+        self.scobility = None
+        self.comfort_zone = None
 
     def dump(self):
         return {
             'name': self.name,
             'e_id': self.e_id,
-            'g_id': self.g_id
+            'g_id': self.g_id,
+            'scobility': self.scobility,
+            'comfort_zone': self.comfort_zone
         }
 
     @classmethod
@@ -158,19 +178,21 @@ class Player:
         cls.name = data['name']
         cls.e_id = data['e_id']
         cls.g_id = data['g_id']
+        cls.scobility = data['scobility']
+        cls.comfort_zone = data['comfort_zone']
 
     def __str__(self):
-        return f'{self.name} (#{self.e_id})'
+        if self.scobility:
+            return f"{self.name} (#{self.e_id}, scobility: {self.scobility:0.3f}🌶)"
+        else:
+            return f'{self.name} (#{self.e_id})'
 
 
 class Relationship:
-    SCORE_SCALAR = 0.0001
     MAX_NEG_LIMIT = 0.20        # i.e., 80% min EX score
     MIN_NEG_LIMIT = 0.01        # i.e., 99% max EX score (ONLY for initial score scaling!)
     WEIGHT_OFFSET = 0.5
     MIN_COMMON_PLAYERS = 10
-    VERBAL = False
-    VISUAL = False
     
     def __init__(self, x: Song, y: Song):
         self.x = x
@@ -179,7 +201,6 @@ class Relationship:
         y_players = set(y.scores)
         self.e_common = x_players.intersection(y_players)
 
-        # TODO: Postpone calculation?
         self.relation = None
         self.strength = None
         self.use_link = None
@@ -226,7 +247,7 @@ class Relationship:
         x_scores = [self.x.scores[e_id].value for e_id in self.e_common]
         y_scores = [self.y.scores[e_id].value for e_id in self.e_common]
 
-        ex_matrix = 1 - np.vstack([x_scores, y_scores]) * Relationship.SCORE_SCALAR
+        ex_matrix = np.vstack([x_scores, y_scores])
 
         screen_max_neg = np.amax(ex_matrix, axis=0)
         screen_min_neg = np.amin(ex_matrix, axis=0)
@@ -244,9 +265,6 @@ class Relationship:
 
         x_col = ex_matrix_lfit1[0, :]
         y_col = ex_matrix_lfit1[1, :]
-
-        # plotting is funny
-        z = np.sort(np.vstack((x_col, y_col)), axis=-1)
         
         # slope of line thru 0 as a starting point?
         a = x_col
@@ -259,10 +277,10 @@ class Relationship:
         self.relation = coefs[0]                        # Slope of the best-fit line
         self.strength = np.sqrt(len(a) / resid[0])      # Reciprocal of residual, accounting for number of data points
         
-        if Relationship.VERBAL:
+        if _VERBAL:
             print(self)
 
-        if Relationship.VISUAL:
+        if _VISUAL:
             plt.scatter(a, b_eq)
 
             x_all = ex_matrix_screen[0, :]
@@ -281,6 +299,7 @@ class Tournament:
     ITERATIONS_SCOBILITY_SORT = 500                 # Refining the scobility values and post-sorting
     SCOBILITY_WINDOW_LOWER = 10                     # Incorporate this many lower scobility readings
     SCOBILITY_WINDOW_UPPER = 6                      # Incorporate this many higher scobility readings
+    PERFECT_OFFSET = 0.003                          # Push scores away from logarithmic asymptote
 
     players: dict = field(default_factory=dict)         # e_id: Player
     songs: dict = field(default_factory=dict)           # s_id: Song
@@ -357,7 +376,7 @@ class Tournament:
                 s_id = s_data['song_id'],
                 e_id = s_data['entrant_id'],
                 clear = Clear(s_data['score_best_clear_type']),
-                value = s_data['score_ex']
+                value = 1 - s_data['score_ex'] * Score.SCORE_SCALAR
             )
             if s.s_id in self.songs:
                 self.songs[s.s_id].scores[s.e_id] = s
@@ -372,7 +391,7 @@ class Tournament:
                         self.relationships[x] = {}
                     self.relationships[x][y] = Relationship(self.songs[x], self.songs[y])
 
-    def calc_relationships(self, verbal=Relationship.VERBAL):
+    def calc_relationships(self, verbal=_VERBAL):
         successes = 0
         rel_list = [r for x, y_dict in self.relationships.items() for y, r in y_dict.items()]
         for i, r in enumerate(rel_list):
@@ -411,7 +430,7 @@ class Tournament:
 
         return self.relationships[x.s_id][y.s_id]
 
-    def view_monotonicity(self, verbal=Relationship.VERBAL, visual=Relationship.VISUAL):
+    def view_monotonicity(self, verbal=_VERBAL, visual=_VISUAL):
         order_progressive_rel = []
         for i_song in range(len(self.ordering)-1):
             order_progressive_rel.append(self.relationship_lookup(self.ordering[i_song], self.ordering[i_song+1]))
@@ -425,7 +444,7 @@ class Tournament:
             plt.plot([1 for r in order_progressive_rel])
             plt.show()
 
-    def order_songs_initial(self, verbal=Relationship.VERBAL, visual=Relationship.VISUAL):
+    def order_songs_initial(self, verbal=_VERBAL, visual=_VISUAL):
         self.ordering = []
 
         # Sort the relationships.
@@ -475,7 +494,7 @@ class Tournament:
 
         self.view_monotonicity(verbal, visual)
 
-    def order_refine_monotonic(self, verbal=Relationship.VERBAL, visual=Relationship.VISUAL):
+    def order_refine_monotonic(self, verbal=_VERBAL, visual=_VISUAL):
         # A few iterations of plain bubble sort until
         # the worst-ordered offenders are smoothed out.
         for a in range(Tournament.ITERATIONS_MONOTONIC_SORT):
@@ -499,30 +518,30 @@ class Tournament:
 
         self.view_monotonicity(verbal, visual)
 
-    def order_refine_scobility(self, verbal=Relationship.VERBAL, visual=Relationship.VISUAL):
+    def order_refine_scobility(self, verbal=_VERBAL, visual=_VISUAL):
         # Generate the naive scobility rating for each chart.
-        self.scobility = []
+        scobility_list = []
         for i, s in enumerate(self.ordering):
             if i == 0:
-                self.scobility = [1]               # Minimum scobility is 0.0
+                scobility_list = [1]               # Minimum scobility is 0.0
                 continue
             r = self.relationship_lookup(self.ordering[i-1], self.ordering[i])
-            self.scobility.append(self.scobility[-1] * r.relation)
+            scobility_list.append(scobility_list[-1] * r.relation)
 
         # Converge the scobility rating by comparing with charts that are "close".
         # Re-sort the ordering according to the new scobility ratings each time.
-        convergence = [np.log2(self.scobility[-1])]
+        convergence = [np.log2(scobility_list[-1])]
 
         for k in range(Tournament.ITERATIONS_SCOBILITY_SORT):
-            ordering_last = [v for v in self.ordering]
-            scobility_last = [v for v in self.scobility]
+            ordering_prev = [v for v in self.ordering]
+            scobility_prev = [v for v in scobility_list]
             for i, s in enumerate(self.ordering):
                 # Snip out the scobility influence window.
-                window = self.ordering[max(0, i - Tournament.SCOBILITY_WINDOW_LOWER) : min(i + Tournament.SCOBILITY_WINDOW_UPPER + 1, len(self.ordering))]
-                nearby_scobility = scobility_last[max(0, i - Tournament.SCOBILITY_WINDOW_LOWER) : min(i + Tournament.SCOBILITY_WINDOW_UPPER + 1, len(self.ordering))]
+                window_scobility = self.ordering[ max(0, i - Tournament.SCOBILITY_WINDOW_LOWER) : min(i + Tournament.SCOBILITY_WINDOW_UPPER + 1, len(self.ordering))]
+                nearby_scobility = scobility_prev[max(0, i - Tournament.SCOBILITY_WINDOW_LOWER) : min(i + Tournament.SCOBILITY_WINDOW_UPPER + 1, len(self.ordering))]
 
                 # Check relationships with the pivot chart.
-                rel_window = [self.relationship_lookup(w, s) for w in window]
+                rel_window = [self.relationship_lookup(w, s) for w in window_scobility]
 
                 # Calculate the influence of each nearby chart (including the pivot).
                 nearby_relation = [r.relation for r in rel_window]
@@ -531,15 +550,15 @@ class Tournament:
 
                 # Replace the scobility with the window-averaged value.
                 influence = sum(nearby_contrib) / sum(nearby_strength)
-                self.scobility[i] = influence
+                scobility_list[i] = influence
 
             # Sort the chart list again based on the new scobility values.
-            scobility_sort = [x for x in zip(self.scobility, self.ordering)]
+            scobility_sort = [x for x in zip(scobility_list, self.ordering)]
             scobility_sort.sort(key=lambda x: x[0])
-            self.scobility = [x[0] / scobility_sort[0][0] for x in scobility_sort]          # Keep minimum scobility pinned at 0.0
+            scobility_list = [x[0] / scobility_sort[0][0] for x in scobility_sort]          # Keep minimum scobility pinned at 0.0
             self.ordering = [x[1] for x in scobility_sort]
 
-            convergence.append(np.log2(self.scobility[-1]))
+            convergence.append(np.log2(scobility_list[-1]))
             if verbal:
                 print(f'>>> Iteration {k+1:2d}: max scobility = {convergence[-1]:0.6f}')
                 if False:
@@ -547,11 +566,65 @@ class Tournament:
                         if prev.s_id != next.s_id:
                             print(f'Iteration {k+1:2d}... #{i:3d}: {prev} -> {next}')
 
+            for i, s in enumerate(self.ordering):
+                s.scobility = scobility_list[i]
+
         return convergence
 
     def view_scobility(self):
+        for s in self.ordering:
+            print(f"{np.log2(s.scobility):5.3f}🌶️ {str(s):>60s}")
+
+
+    def calc_player_scobility(self, player: Player, verbal=_VERBAL, visual=_VISUAL):
+        scores = np.full((len(self.ordering),), np.nan)
+        bility = np.full((len(self.ordering),), np.nan)
+
         for i, s in enumerate(self.ordering):
-            print(f"{np.log2(self.scobility[i]):5.3f}🌶️ {str(s):>60s}")
+            if s.s_id in player.scores:
+                scores[i] = player.scores[s.s_id].value
+            if s.scobility:
+                bility[i] = s.scobility
+
+        p_bility = np.log2(bility)
+        p_scores = np.log2(Tournament.PERFECT_OFFSET + scores)
+
+        # Draw a best-fit line to calculate the player's strength.
+        p_played = ~np.isnan(p_scores)
+        a = p_bility[p_played]
+        b = p_bility[p_played] - p_scores[p_played]         # Expected to be constant...
+        w = a # np.ones_like(a) # 1 - 1/(a + Relationship.WEIGHT_OFFSET)**2
+        m = np.vstack([np.ones_like(a), a])
+        coefs = np.linalg.lstsq(m.T * w[:, np.newaxis], b * w, rcond=None)[0]
+        b_eq = coefs @ m
+
+        if visual:
+            plt.subplots(figsize=(6, 6))
+            plt.plot(a, b_eq, 'r')
+            plt.scatter(a, b)
+            plt.show()
+
+        p_quality = p_bility[p_played] - p_scores[p_played]
+        p_songs = np.array(self.ordering)[p_played]
+        p_ranking = [z for z in zip([s for s in p_songs], [q for q in p_quality])]
+        p_ranking.sort(key=lambda x: x[1])
+
+        player.scobility = sum(p_quality) / len(p_quality)
+        player.comfort_zone = coefs[1]
+        if verbal:
+            print(f'Funny Summary Number(tm) for {player}: {player.scobility:0.3f}🌶')
+            if coefs[1] > 0:
+                print(f'>>> You outperform your peers on harder charts. (m = {player.comfort_zone:0.3f})')
+            else:
+                print(f'>>> You outperform your peers on easier charts. (m = {player.comfort_zone:0.3f})')
+
+            print(f'\nTop 5 Best Scores for {player}:')
+            for s, v in reversed(p_ranking[-5:]):
+                print(f'{(1 - player.scores[s.s_id].value)*100:5.2f}% on {s} (Quality parameter: {v:0.3f})')
+            print(f'\nTop 5 Improvement Opportunities for {player}:')
+            for s, v in p_ranking[:5]:
+                print(f'{(1 - player.scores[s.s_id].value)*100:5.2f}% on {s} (Quality parameter: {v:0.3f})')
+
 
 
 
@@ -615,6 +688,9 @@ def process_itl():
     # with open('scobility_itl.json', 'r') as fp:
     #     itl2 = Tournament.load(json.load(fp))
 
+    print('========================================================================')
+    print('=== Attempting scobility calculation for Player #321...')
+    itl.calc_player_scobility(itl.players[321], verbal=True, visual=True)
     print('========================================================================')
     print('=== Done!')
 
