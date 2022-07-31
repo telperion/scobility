@@ -3,8 +3,9 @@
 import json
 import glob
 import os
+import sys
+from io import StringIO
 from functools import reduce
-from xml.dom import NotFoundErr
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -12,9 +13,8 @@ from matplotlib import pyplot as plt
 from enum import IntEnum
 from dataclasses import dataclass, field
 from typing import List
-from copy import deepcopy
 
-
+_VERSION = 'v0.95'
 _VERBAL = False
 _VISUAL = False
 
@@ -95,7 +95,7 @@ class Song:
     meter: float = 0
     slot: str = 'Challenge'
     scores: dict = field(default_factory=dict)      # e_id: Score
-    scobility: float = None
+    spice: float = None                             # Not a Dune reference. capsaicin not cinnamon
 
     def __init__(self, data: dict):
         self.s_id = data['song_id']
@@ -114,7 +114,7 @@ class Song:
         self.slot = data['song_difficulty']
 
         self.scores = {}
-        self.scobility = None
+        self.spice = None
 
     def dump(self):
         return {
@@ -125,7 +125,7 @@ class Song:
             'artist': self.artist,
             'meter': self.meter,
             'slot': self.slot,
-            'scobility': self.scobility
+            'spice': self.spice
         }
 
     @classmethod
@@ -137,13 +137,10 @@ class Song:
         cls.artist = data['artist']
         cls.meter = data['meter']
         cls.slot = data['slot']
-        cls.scobility = data['scobility']
+        cls.spice = data['spice']
 
     def __str__(self):
-        if self.scobility:
-            return f"#{self.s_id} {self.title} ({self.slot} {self.meter}, {np.log2(self.scobility):0.3f}🌶)"
-        else:
-            return f"#{self.s_id} {self.title} ({self.slot} {self.meter})"
+        return f"#{self.s_id} {self.title} ({self.slot} {self.meter})"
 
 
 @dataclass
@@ -154,7 +151,8 @@ class Player:
     scores: dict = field(default_factory=dict)      # s_id: Score
 
     scobility: float = None
-    comfort_zone: float = None    
+    comfort_zone: float = None
+    tourney_power: float = None
 
     def __init__(self, data: dict):
         self.name = data['members_name']
@@ -163,6 +161,7 @@ class Player:
         self.scores = {}
         self.scobility = None
         self.comfort_zone = None
+        self.tourney_power = None
 
     def dump(self):
         return {
@@ -170,7 +169,8 @@ class Player:
             'e_id': self.e_id,
             'g_id': self.g_id,
             'scobility': self.scobility,
-            'comfort_zone': self.comfort_zone
+            'comfort_zone': self.comfort_zone,
+            'tourney_power': self.tourney_power
         }
 
     @classmethod
@@ -180,12 +180,10 @@ class Player:
         cls.g_id = data['g_id']
         cls.scobility = data['scobility']
         cls.comfort_zone = data['comfort_zone']
+        cls.tourney_power = data['tourney_power']
 
     def __str__(self):
-        if self.scobility:
-            return f"{self.name} (#{self.e_id}, scobility: {self.scobility:0.3f}🌶)"
-        else:
-            return f'{self.name} (#{self.e_id})'
+        return f"{self.name} (#{self.e_id})"
 
 
 class Relationship:
@@ -241,6 +239,18 @@ class Relationship:
 
 
     def calc_relationship(self):
+        """
+        Use the scores of players that have played both songs and
+        perform some sort of fit to that data.
+
+        It seems like, after snipping out the very top end (> 99%)
+        and the lower end (< 80%) of scores...a linear fit kinda
+        does the job well enough??
+
+        I do have a weighting in so that better scores within that
+        range have more influence on the best-fit calculation.
+        """
+
         if len(self.e_common) < Relationship.MIN_COMMON_PLAYERS:
             raise ValueError(f'Not enough players to relate {self.compare_title()} ({len(self.e_common)} players, need {Relationship.MIN_COMMON_PLAYERS})')
 
@@ -300,12 +310,12 @@ class Tournament:
     SCOBILITY_WINDOW_LOWER = 10                     # Incorporate this many lower scobility readings
     SCOBILITY_WINDOW_UPPER = 6                      # Incorporate this many higher scobility readings
     PERFECT_OFFSET = 0.003                          # Push scores away from logarithmic asymptote
+    MAX_TOURNEY_POWER = 100                         # idk, I need a value
 
     players: dict = field(default_factory=dict)         # e_id: Player
     songs: dict = field(default_factory=dict)           # s_id: Song
     relationships: dict = field(default_factory=dict)   # r.x: {r.y: Relationship}
     ordering: list = field(default_factory=list)        # List[Song]
-    scobility: list = field(default_factory=list)       # List[float]
 
     def dump(self):
         j = {
@@ -349,6 +359,7 @@ class Tournament:
 
     @staticmethod
     def link_through(a: Relationship, b: Relationship) -> Relationship:
+        # Why not?
         if a.y.s_id != b.x.s_id:
             raise ValueError(f'Discontinuous link {a.y.s_id} -> {b.x.s_id}')
 
@@ -362,6 +373,7 @@ class Tournament:
 
     @staticmethod
     def link_strength(links: List[Relationship]) -> Relationship:
+        # Okay maybe this is a stretch
         if len(links) == 0:
             return None
         if len(links) == 1:
@@ -407,7 +419,7 @@ class Tournament:
         print(f'Completed relationship calculations ({successes} out of {len(rel_list)} strong pairs)')
 
     def relationship_lookup(self, x: Song, y: Song, allow_link: bool = False) -> Relationship:
-        # TODO: Oh no
+        # TODO: Oh no my data model
         if x.s_id == y.s_id:
             # Same song!
             r = Relationship(x, x)
@@ -419,6 +431,7 @@ class Tournament:
         if y.s_id not in self.relationships[x.s_id]:
             if not allow_link:
                 raise ValueError(f'No relationship for {y} vs. {x}')
+            # Allow transitive relationship extension...
             potential_links = []
             for z_id in self.relationships[x.s_id]:
                 if y.s_id in self.relationships[z_id]:
@@ -518,120 +531,161 @@ class Tournament:
 
         self.view_monotonicity(verbal, visual)
 
-    def order_refine_scobility(self, verbal=_VERBAL, visual=_VISUAL):
-        # Generate the naive scobility rating for each chart.
-        scobility_list = []
+    def order_refine_by_spice(self, verbal=_VERBAL, visual=_VISUAL):
+        # Generate the naive spice rating for each chart.
+        spice_list = []
         for i, s in enumerate(self.ordering):
             if i == 0:
-                scobility_list = [1]               # Minimum scobility is 0.0
+                spice_list = [1]               # Minimum spice is 0.0
                 continue
             r = self.relationship_lookup(self.ordering[i-1], self.ordering[i])
-            scobility_list.append(scobility_list[-1] * r.relation)
+            spice_list.append(spice_list[-1] * r.relation)
 
-        # Converge the scobility rating by comparing with charts that are "close".
-        # Re-sort the ordering according to the new scobility ratings each time.
-        convergence = [np.log2(scobility_list[-1])]
+        # Converge the spice rating by comparing with charts that are "close".
+        # Re-sort the ordering according to the new spice ratings each time.
+        convergence = [np.log2(spice_list[-1])]
 
         for k in range(Tournament.ITERATIONS_SCOBILITY_SORT):
             ordering_prev = [v for v in self.ordering]
-            scobility_prev = [v for v in scobility_list]
+            spice_prev = [v for v in spice_list]
             for i, s in enumerate(self.ordering):
-                # Snip out the scobility influence window.
-                window_scobility = self.ordering[ max(0, i - Tournament.SCOBILITY_WINDOW_LOWER) : min(i + Tournament.SCOBILITY_WINDOW_UPPER + 1, len(self.ordering))]
-                nearby_scobility = scobility_prev[max(0, i - Tournament.SCOBILITY_WINDOW_LOWER) : min(i + Tournament.SCOBILITY_WINDOW_UPPER + 1, len(self.ordering))]
+                # Snip out the spice influence window.
+                window    = self.ordering[max(0, i - Tournament.SCOBILITY_WINDOW_LOWER) : min(i + Tournament.SCOBILITY_WINDOW_UPPER + 1, len(self.ordering))]
+                nearby_spice = spice_prev[max(0, i - Tournament.SCOBILITY_WINDOW_LOWER) : min(i + Tournament.SCOBILITY_WINDOW_UPPER + 1, len(self.ordering))]
 
                 # Check relationships with the pivot chart.
-                rel_window = [self.relationship_lookup(w, s) for w in window_scobility]
+                rel_window = [self.relationship_lookup(w, s) for w in window]
 
                 # Calculate the influence of each nearby chart (including the pivot).
                 nearby_relation = [r.relation for r in rel_window]
                 nearby_strength = [r.strength for r in rel_window]
-                nearby_contrib = [r * s * v for r, s, v in zip(nearby_relation, nearby_strength, nearby_scobility)]
+                nearby_contrib = [r * s * v for r, s, v in zip(nearby_relation, nearby_strength, nearby_spice)]
 
-                # Replace the scobility with the window-averaged value.
+                # Replace the spice with the window-averaged value.
                 influence = sum(nearby_contrib) / sum(nearby_strength)
-                scobility_list[i] = influence
+                spice_list[i] = influence
 
-            # Sort the chart list again based on the new scobility values.
-            scobility_sort = [x for x in zip(scobility_list, self.ordering)]
-            scobility_sort.sort(key=lambda x: x[0])
-            scobility_list = [x[0] / scobility_sort[0][0] for x in scobility_sort]          # Keep minimum scobility pinned at 0.0
-            self.ordering = [x[1] for x in scobility_sort]
+            # Sort the chart list again based on the new spice values.
+            spice_sort = [x for x in zip(spice_list, self.ordering)]
+            spice_sort.sort(key=lambda x: x[0])
+            spice_list = [x[0] / spice_sort[0][0] for x in spice_sort]          # Keep minimum spice pinned at 0.0
+            self.ordering = [x[1] for x in spice_sort]
 
-            convergence.append(np.log2(scobility_list[-1]))
+            convergence.append(np.log2(spice_list[-1]))
             if verbal:
-                print(f'>>> Iteration {k+1:2d}: max scobility = {convergence[-1]:0.6f}')
+                print(f'>>> Iteration {k+1:2d}: max spice = {convergence[-1]:0.6f}')
                 if False:
                     for i, (prev, next) in enumerate(zip(ordering_last, self.ordering)):
                         if prev.s_id != next.s_id:
                             print(f'Iteration {k+1:2d}... #{i:3d}: {prev} -> {next}')
 
             for i, s in enumerate(self.ordering):
-                s.scobility = scobility_list[i]
+                s.spice = spice_list[i]
 
         return convergence
 
-    def view_scobility(self):
+    def view_spice_ranking(self, fp=None):
         for s in self.ordering:
-            print(f"{np.log2(s.scobility):5.3f}🌶️ {str(s):>60s}")
+            print(f"{np.log2(s.spice):5.3f}🌶 {str(s):>60s}", file=fp or sys.stdout)
 
 
-    def calc_player_scobility(self, player: Player, verbal=_VERBAL, visual=_VISUAL):
+    def calc_player_scobility(self, player: Player, dst_dir=None, verbal=_VERBAL, visual=_VISUAL):
         scores = np.full((len(self.ordering),), np.nan)
-        bility = np.full((len(self.ordering),), np.nan)
+        spices = np.full((len(self.ordering),), np.nan)
 
         for i, s in enumerate(self.ordering):
             if s.s_id in player.scores:
                 scores[i] = player.scores[s.s_id].value
-            if s.scobility:
-                bility[i] = s.scobility
+            if s.spice:
+                spices[i] = s.spice
 
-        p_bility = np.log2(bility)
-        p_scores = np.log2(Tournament.PERFECT_OFFSET + scores)
+        # The lowest possible score (0%) on the chart with
+        # the lowest spice level will define the (0, 0) point.
+        p_min = np.log2(Tournament.PERFECT_OFFSET + 1)
+        p_max = np.log2(Tournament.PERFECT_OFFSET)
+        p_spices = np.log2(spices)
+        p_scores = np.log2(Tournament.PERFECT_OFFSET + scores) - p_min
 
         # Draw a best-fit line to calculate the player's strength.
+        # Mostly used to determine the "comfort zone", i.e.
+        # where do you outperform your peers? easier or harder charts?
+        # by observing the slope of the best-fit line.
         p_played = ~np.isnan(p_scores)
-        a = p_bility[p_played]
-        b = p_bility[p_played] - p_scores[p_played]         # Expected to be constant...
+        a = p_spices[p_played]
+        b = p_spices[p_played] - p_scores[p_played]         # Expected to be constant...
         w = a # np.ones_like(a) # 1 - 1/(a + Relationship.WEIGHT_OFFSET)**2
         m = np.vstack([np.ones_like(a), a])
         coefs = np.linalg.lstsq(m.T * w[:, np.newaxis], b * w, rcond=None)[0]
         b_eq = coefs @ m
 
-        if visual:
-            plt.subplots(figsize=(6, 6))
-            plt.plot(a, b_eq, 'r')
-            plt.scatter(a, b)
-            plt.show()
-
-        p_quality = p_bility[p_played] - p_scores[p_played]
+        p_quality = p_spices[p_played] - p_scores[p_played]
         p_songs = np.array(self.ordering)[p_played]
         p_ranking = [z for z in zip([s for s in p_songs], [q for q in p_quality])]
         p_ranking.sort(key=lambda x: x[1])
 
-        player.scobility = sum(p_quality) / len(p_quality)
+        # TODO: derive a volforce-like "tournament power" that rewards
+        # playing more songs as well as getting better scores
+        # this is a pretty silly first stab at it imo
+        player.tourney_power = sum(p_quality) / len(p_quality) * np.sqrt(len(p_quality) / len(self.ordering)) * Tournament.MAX_TOURNEY_POWER
+        player.scobility = sum(p_quality) / len(p_quality)  # Simple average...
         player.comfort_zone = coefs[1]
+
+        # Plot score quality by chart spice level
+        plt.subplots(figsize=(6, 6))
+        plt.plot(a, b_eq, 'r')
+        plt.scatter(a, b)
+        plt.xlabel('Chart spice level')
+        plt.ylabel('Score quality')
+        plt.title(f'Scobility {_VERSION} plot for {player}\nRating: $\\bf{{{player.scobility:0.3f}}}$')
+        if dst_dir is not None:
+            plt.savefig(os.path.join(dst_dir, f'{player.e_id}.png'))
+        if visual:
+            plt.show()
+        plt.close('all')
+
+        stats = StringIO()
+        print(f'Scobility {_VERSION} for {player}: {player.scobility:0.3f}🌶', file=stats)
+        if player.comfort_zone > 0:
+            print(f'>>> You outperform your peers on harder charts. (m = {player.comfort_zone:0.3f})', file=stats)
+        else:
+            print(f'>>> You outperform your peers on easier charts. (m = {player.comfort_zone:0.3f})', file=stats)
+
+        # TODO: back out what an "appropriate" score for this player
+        # on the listed songs would be
+        print(f'\nTop 5 Best Scores for {player}:', file=stats)
+        for s, v in reversed(p_ranking[-5:]):
+            print(f'{(1 - player.scores[s.s_id].value)*100:5.2f}% on {s} (Quality parameter: {v:0.3f})', file=stats)
+        print(f'\nTop 5 Improvement Opportunities for {player}:', file=stats)
+        for s, v in p_ranking[:5]:
+            print(f'{(1 - player.scores[s.s_id].value)*100:5.2f}% on {s} (Quality parameter: {v:0.3f})', file=stats)
+
+        if dst_dir is not None:
+            with open(os.path.join(dst_dir, f'{player.e_id}.txt'), 'w', encoding='utf-8') as fp:
+                fp.write(stats.getvalue())
         if verbal:
-            print(f'Funny Summary Number(tm) for {player}: {player.scobility:0.3f}🌶')
-            if coefs[1] > 0:
-                print(f'>>> You outperform your peers on harder charts. (m = {player.comfort_zone:0.3f})')
-            else:
-                print(f'>>> You outperform your peers on easier charts. (m = {player.comfort_zone:0.3f})')
-
-            print(f'\nTop 5 Best Scores for {player}:')
-            for s, v in reversed(p_ranking[-5:]):
-                print(f'{(1 - player.scores[s.s_id].value)*100:5.2f}% on {s} (Quality parameter: {v:0.3f})')
-            print(f'\nTop 5 Improvement Opportunities for {player}:')
-            for s, v in p_ranking[:5]:
-                print(f'{(1 - player.scores[s.s_id].value)*100:5.2f}% on {s} (Quality parameter: {v:0.3f})')
+            print(stats.getvalue())
 
 
+    def view_scobility_ranking(self, fp=None):
+        p_sort = sorted([p for p in self.players.values() if p.scobility is not None], key=lambda p: p.scobility)
+        for p in reversed(p_sort):
+            print(f"{p.scobility:6.3f}🌶 {str(p):>30s} (balance: {p.comfort_zone:6.3f})", file=fp or sys.stdout)
+
+    def view_tourney_ranking(self, fp=None):
+        p_sort = sorted([p for p in self.players.values() if p.tourney_power is not None], key=lambda p: p.tourney_power)
+        for p in reversed(p_sort):
+            print(f"{p.tourney_power:7.3f} TP {str(p):>30s} (scobility: {p.scobility:6.3f}🌶, balance: {p.comfort_zone:6.3f})", file=fp or sys.stdout)
 
 
 def process_itl():
     itl = Tournament()
 
     # https://github.com/G-Wen/itl_history
+    
+    print('========================================================================')
+    print(f'=== Scobility {_VERSION}')
+    print('========================================================================')
+    print()
     print('========================================================================')
     print('=== Loading data...')
 
@@ -673,13 +727,15 @@ def process_itl():
     itl.order_songs_initial(verbal=False, visual=False)
     print('========================================================================')
     print('=== Bubbling out non-monotonicities...')
-    itl.order_refine_monotonic(verbal=True, visual=False)
+    itl.order_refine_monotonic(verbal=False, visual=False)
     print('========================================================================')
-    print('=== Refining scobility using neighborhood influence...')
-    itl.order_refine_scobility(verbal=True, visual=False)
+    print('=== Refining spice ranking using neighborhood influence...')
+    itl.order_refine_by_spice(verbal=False, visual=False)
     print('========================================================================')
-    print('=== Scobility calculation complete!...')
-    itl.view_scobility()
+    print('=== Spice ranking calculation complete!...')
+    # itl.view_spice_ranking()
+    with open('itl_data/spice_ranking.txt', 'w', encoding='utf-8') as fp:
+        itl.view_spice_ranking(fp)
 
     # Store (and re-load?)
     # with open('scobility_itl.json', 'w') as fp:
@@ -689,8 +745,23 @@ def process_itl():
     #     itl2 = Tournament.load(json.load(fp))
 
     print('========================================================================')
-    print('=== Attempting scobility calculation for Player #321...')
-    itl.calc_player_scobility(itl.players[321], verbal=True, visual=True)
+    print('=== Performing scobility calculations...')
+    for p in itl.players.values():
+        try:
+            itl.calc_player_scobility(p, dst_dir='itl_data/scobility', verbal=False, visual=False)
+        except Exception as e:
+            print(f'Scobility calculation failed for {p} (probably due to lack of sufficient score data)', file=sys.stderr)
+            print(e, file=sys.stderr)
+    print('========================================================================')
+    print('=== Ranking players by scobility...')
+    # itl.view_scobility_ranking()
+    with open('itl_data/scobility_ranking.txt', 'w', encoding='utf-8') as fp:
+        itl.view_scobility_ranking(fp)
+    print('========================================================================')
+    print('=== Ranking players by tourney performance...')
+    # itl.view_tourney_ranking()
+    with open('itl_data/tourney_ranking.txt', 'w', encoding='utf-8') as fp:
+        itl.view_tourney_ranking(fp)
     print('========================================================================')
     print('=== Done!')
 
