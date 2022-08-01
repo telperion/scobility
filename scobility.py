@@ -282,7 +282,6 @@ class Relationship:
         w = 1 - 1/(a + Relationship.WEIGHT_OFFSET)**2
         p = np.vstack([a])
         coefs, resid = np.linalg.lstsq(p.T * w[:, np.newaxis], b * w, rcond=None)[:2]
-        b_eq = coefs @ p
 
         self.relation = coefs[0]                        # Slope of the best-fit line
         self.strength = np.sqrt(len(a) / resid[0])      # Reciprocal of residual, accounting for number of data points
@@ -290,14 +289,22 @@ class Relationship:
         if _VERBAL:
             print(self)
 
-        if _VISUAL:
-            plt.scatter(a, b_eq)
+        if _VISUAL and self.x.s_id == 6 and self.y.s_id == 9:
+            p_sort = np.sort(a)[np.newaxis]
+            b_eq = coefs @ p_sort
+
+            plt.subplots(figsize=(6, 6))
+            plt.plot(p_sort.T, b_eq, color='tab:blue')
 
             x_all = ex_matrix_screen[0, :]
             y_all = ex_matrix_screen[1, :]
 
-            plt.scatter(x_all, y_all)
+            plt.scatter(x_all, y_all, color='tab:pink')
+            plt.xlabel(f'{self.x}, Difference from 100%')
+            plt.ylabel(f'{self.y}, Difference from 100%')
+            plt.title(f'{self.compare_title()}\nRelation: {self.relation:0.3f}, Strength: {self.strength:0.3f}')
             plt.show()
+            plt.close('all')
         
 
 
@@ -632,8 +639,8 @@ class Tournament:
 
         # Plot score quality by chart spice level
         plt.subplots(figsize=(6, 6))
-        plt.plot(a, b_eq, 'r')
-        plt.scatter(a, b)
+        plt.scatter(a, b, color='tab:pink')
+        plt.plot(a, b_eq, color='tab:blue')
         plt.xlabel('Chart spice level')
         plt.ylabel('Score quality')
         plt.title(f'Scobility {_VERSION} plot for {player}\nRating: $\\bf{{{player.scobility:0.3f}}}$')
