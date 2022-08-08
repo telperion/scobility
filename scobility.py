@@ -4,8 +4,10 @@ import json
 import glob
 import os
 import sys
+import gc
 from io import StringIO
 from functools import reduce
+from warnings import warn
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -14,20 +16,22 @@ from enum import IntEnum
 from dataclasses import dataclass, field
 from typing import List
 
-_VERSION = 'v0.95'
+_VERSION = 'v0.96'
 _VERBAL = False
 _VISUAL = False
 
 class Clear(IntEnum):
-    PASS = 0
-    FC = 1
-    FEC = 2
-    QUAD = 3
-    QUINT = 4
+    FAIL = 0
+    PASS = 1
+    BATTERY = 2
+    FC = 3
+    FEC = 4
+    QUAD = 5
+    QUINT = 6
 
 @dataclass
 class Score:
-    SCORE_SCALAR = 0.0001
+    SCORE_SCALAR = 0.000001
 
     s_id: int = -1
     e_id: int = -1
@@ -187,8 +191,8 @@ class Player:
 
 
 class Relationship:
-    MAX_NEG_LIMIT = 0.20        # i.e., 80% min EX score
-    MIN_NEG_LIMIT = 0.01        # i.e., 99% max EX score (ONLY for initial score scaling!)
+    MAX_NEG_LIMIT = 0.3             # i.e., 700,000 min EX score
+    MIN_NEG_LIMIT = 0.0002          # i.e., 999,800 max EX score (ONLY for initial score scaling!)
     WEIGHT_OFFSET = 0.5
     MIN_COMMON_PLAYERS = 10
     
@@ -250,6 +254,9 @@ class Relationship:
         I do have a weighting in so that better scores within that
         range have more influence on the best-fit calculation.
         """
+        x_players = set(self.x.scores)
+        y_players = set(self.y.scores)
+        self.e_common = x_players.intersection(y_players)
 
         if len(self.e_common) < Relationship.MIN_COMMON_PLAYERS:
             raise ValueError(f'Not enough players to relate {self.compare_title()} ({len(self.e_common)} players, need {Relationship.MIN_COMMON_PLAYERS})')
@@ -275,6 +282,11 @@ class Relationship:
 
         x_col = ex_matrix_lfit1[0, :]
         y_col = ex_matrix_lfit1[1, :]
+
+        if ex_matrix_lfit1.shape[1] < Relationship.MIN_COMMON_PLAYERS:
+            min_score_check = (1 - Relationship.MAX_NEG_LIMIT) / Score.SCORE_SCALAR
+            max_score_check = (1 - Relationship.MIN_NEG_LIMIT) / Score.SCORE_SCALAR
+            raise ValueError(f'Not enough scores between {min_score_check:0.0f} and {max_score_check:0.0f} to relate {self.compare_title()} ({len(self.e_common)} players, need {Relationship.MIN_COMMON_PLAYERS})')
         
         # slope of line thru 0 as a starting point?
         a = x_col
@@ -289,7 +301,7 @@ class Relationship:
         if _VERBAL:
             print(self)
 
-        if _VISUAL and self.x.s_id == 6 and self.y.s_id == 9:
+        if _VISUAL and self.x.s_id == 280 and self.y.s_id == 430:
             p_sort = np.sort(a)[np.newaxis]
             b_eq = coefs @ p_sort
 
@@ -389,7 +401,7 @@ class Tournament:
         return reduce(Tournament.link_through, links)
 
 
-    def load_score_data(self, score_data: list):
+    def load_score_data(self, score_data: list, assign_to_player: bool = True):
         for s_data in score_data:
             s = Score(
                 s_id = s_data['song_id'],
@@ -399,16 +411,16 @@ class Tournament:
             )
             if s.s_id in self.songs:
                 self.songs[s.s_id].scores[s.e_id] = s
-            if s.e_id in self.players:
+            if assign_to_player and (s.e_id in self.players):
                 self.players[s.e_id].scores[s.s_id] = s
 
     def setup_relationships(self):
         for x in self.songs:
-            for y in self.songs:
-                if x != y:
-                    if x not in self.relationships:
-                        self.relationships[x] = {}
-                    self.relationships[x][y] = Relationship(self.songs[x], self.songs[y])
+            prev = [y for y in self.relationships]
+            self.relationships[x] = {}
+            for y in prev:
+                self.relationships[x][y] = Relationship(self.songs[x], self.songs[y])
+                self.relationships[y][x] = Relationship(self.songs[y], self.songs[x])
 
     def calc_relationships(self, verbal=_VERBAL):
         successes = 0
@@ -424,6 +436,128 @@ class Tournament:
                 print(e)
         
         print(f'Completed relationship calculations ({successes} out of {len(rel_list)} strong pairs)')
+
+
+    def calc_relationship_safe(self, index: int, a: Song, b: Song, verbal=_VERBAL):
+        try:
+            r = self.relationships[a][b]
+            r.calc_relationship()
+            if verbal:
+                print(f'--- {index:6d} {r}')
+            return True
+        except ValueError as e:
+            print(f'!!! {index:6d} ', end='')
+            print(e)
+            return False
+
+
+    def calc_relationships_jit(self, verbal=_VERBAL,
+        src = 'song_scores',
+        chunk_size = 100,
+        exclude_diagonal = True,
+        explicit_pairs = False
+        ):
+        # Memory-saving modification - only load a couple
+        # score database partitions at one time.
+        # (Also try to minimize loads!)
+
+        # Partition the list of charts into chunks.
+        song_id_list = [s for s in self.songs.keys()]
+        songs_partition = [song_id_list[i:i+chunk_size] for i in range(0, len(self.songs), chunk_size)]
+        rel_within_part = [False for s_part in songs_partition]
+
+        # Generate the loading order by walking back and forth in
+        # one triangular half of all possible pairs.
+        load_replacement = []
+        exc_diag = exclude_diagonal and 1 or 0
+        for i_row in range(0, len(songs_partition), 2):
+            # (i, i) --> (i, n)
+            for i_col in range(i_row + exc_diag, len(songs_partition)):
+                if explicit_pairs or (i_col == i_row + exc_diag):
+                    load_replacement.append( (i_row, i_col) )
+                else:
+                    load_replacement.append( (None, i_col) )
+
+            # (i+1, i+1) <-- (i+1, n)
+            if i_row + 1 >= len(songs_partition):
+                break
+            for i_col in range(len(songs_partition) - 1, i_row + exc_diag, -1):
+                if i_col == len(songs_partition) - 1:
+                    load_replacement.append( (i_row + 1, explicit_pairs and i_col or None) )
+                else:
+                    load_replacement.append( (explicit_pairs and (i_row + 1) or None, i_col) )
+
+        # print(load_replacement)
+
+        # Calculate all the relationships!
+        successes = 0
+        attempted = 0
+        index_a = -1
+        index_b = -1
+        part_a = []
+        part_b = []
+        for (repl_a, repl_b) in load_replacement:
+            # Clear out memory used for the previous partitions.
+            repl_load = []
+            if repl_a is not None:
+                for s_id in part_a:
+                    del self.songs[s_id].scores
+                    self.songs[s_id].scores = {}
+                index_a = repl_a
+                part_a = songs_partition[repl_a]
+                repl_load += part_a
+            if repl_b is not None:
+                for s_id in part_b:
+                    del self.songs[s_id].scores
+                    self.songs[s_id].scores = {}
+                index_b = repl_b
+                part_b = songs_partition[repl_b]
+                repl_load += part_b
+            gc_unreachable = gc.collect()
+            print(f'gc: {gc_unreachable}')
+
+            if True: # verbal:
+                print(f'@@@ Partitions: {index_a:4d} & {index_b:4d}')
+
+            # Load scores for any charts that appear in fresh partitions.
+            for s_id in repl_load:
+                s = self.songs[s_id]
+                # Try loading by song hash, then by song ID...
+                fn = os.path.join(src, f'{s.hash}.json')
+                if not os.path.exists(fn):
+                    fn = os.path.join(src, f'{s_id}.json')
+                if not os.path.exists(fn):
+                    warn(f'Couldn\'t open a score data file matching {s.s_id} or {s.hash}', RuntimeWarning)
+
+                with open(fn, 'r') as fp:
+                    score_data = json.load(fp)
+                    self.load_score_data(score_data['scores'], assign_to_player=False)
+
+            # Calculate all relationships between these two partitions.
+            for a in part_a:
+                for b in part_b:
+                    attempted += 1
+                    successes += self.calc_relationship_safe(attempted, a, b, verbal) and 1 or 0
+                    
+                    attempted += 1
+                    successes += self.calc_relationship_safe(attempted, b, a, verbal) and 1 or 0
+                
+            # Calculate all relationships within each partition
+            # (if not done yet).
+            for index_x, part_x in {index_a: part_a, index_b: part_b}.items():
+                if not rel_within_part[index_x]:
+                    for a in part_x:
+                        for b in part_x:
+                            if a != b:
+                                attempted += 1
+                                successes += self.calc_relationship_safe(attempted, a, b, verbal) and 1 or 0
+                                
+                                attempted += 1
+                                successes += self.calc_relationship_safe(attempted, b, a, verbal) and 1 or 0
+                    rel_within_part[index_x] = True
+
+        
+        print(f'Completed relationship calculations ({successes} out of {attempted} strong pairs)')
 
     def relationship_lookup(self, x: Song, y: Song, allow_link: bool = False) -> Relationship:
         # TODO: Oh no my data model
@@ -525,9 +659,9 @@ class Tournament:
                 y = self.ordering[i+1]
                 r_fwd = self.relationship_lookup(x, y, allow_link=True)
                 r_rev = self.relationship_lookup(y, x, allow_link=True)
-                if r_fwd and r_fwd.relation < Tournament.MONO_THRESHOLD:
+                if r_fwd and r_fwd.relation and r_fwd.relation < Tournament.MONO_THRESHOLD:
                     # Might benefit from a swap...
-                    if r_rev and r_rev.relation > r_fwd.relation:
+                    if r_rev and r_rev.relation and r_rev.relation > r_fwd.relation:
                         # Only swap if an improvement would be observed!
                         self.ordering = self.ordering[:i] + [y, x] + self.ordering[i+2:]
             if verbal:
@@ -541,7 +675,7 @@ class Tournament:
     def order_refine_by_spice(self, verbal=_VERBAL, visual=_VISUAL):
         # Generate the naive spice rating for each chart.
         spice_list = []
-        for i, s in enumerate(self.ordering):
+        for i, song in enumerate(self.ordering):
             if i == 0:
                 spice_list = [1]               # Minimum spice is 0.0
                 continue
@@ -555,21 +689,21 @@ class Tournament:
         for k in range(Tournament.ITERATIONS_SCOBILITY_SORT):
             ordering_prev = [v for v in self.ordering]
             spice_prev = [v for v in spice_list]
-            for i, s in enumerate(self.ordering):
+            for i, song in enumerate(self.ordering):
                 # Snip out the spice influence window.
                 window    = self.ordering[max(0, i - Tournament.SCOBILITY_WINDOW_LOWER) : min(i + Tournament.SCOBILITY_WINDOW_UPPER + 1, len(self.ordering))]
                 nearby_spice = spice_prev[max(0, i - Tournament.SCOBILITY_WINDOW_LOWER) : min(i + Tournament.SCOBILITY_WINDOW_UPPER + 1, len(self.ordering))]
 
                 # Check relationships with the pivot chart.
-                rel_window = [self.relationship_lookup(w, s) for w in window]
+                rel_window = [self.relationship_lookup(w, song) for w in window]
 
                 # Calculate the influence of each nearby chart (including the pivot).
                 nearby_relation = [r.relation for r in rel_window]
                 nearby_strength = [r.strength for r in rel_window]
-                nearby_contrib = [r * s * v for r, s, v in zip(nearby_relation, nearby_strength, nearby_spice)]
+                nearby_contrib = [r * s * v for r, s, v in zip(nearby_relation, nearby_strength, nearby_spice) if s is not None]
 
                 # Replace the spice with the window-averaged value.
-                influence = sum(nearby_contrib) / sum(nearby_strength)
+                influence = sum(nearby_contrib) / sum([s for s in nearby_strength if s is not None])
                 spice_list[i] = influence
 
             # Sort the chart list again based on the new spice values.
@@ -586,8 +720,8 @@ class Tournament:
                         if prev.s_id != next.s_id:
                             print(f'Iteration {k+1:2d}... #{i:3d}: {prev} -> {next}')
 
-            for i, s in enumerate(self.ordering):
-                s.spice = spice_list[i]
+            for i, song in enumerate(self.ordering):
+                song.spice = spice_list[i]
 
         return convergence
 
@@ -684,65 +818,80 @@ class Tournament:
             print(f"{p.tourney_power:7.3f} TP {str(p):>30s} (scobility: {p.scobility:6.3f}🌶, balance: {p.comfort_zone:6.3f})", file=fp or sys.stdout)
 
 
-def process_itl():
-    itl = Tournament()
+def load_json_data(root='itl_data', jit=False):
+    tourney = Tournament()
 
-    # https://github.com/G-Wen/itl_history
-    
+    if not os.path.exists(root):
+        raise FileNotFoundError(f'Tournament data scrape needs to be unpacked to {root}!')
+
+    # Song info
+    song_files = glob.glob(os.path.join(root, 'song_info', '*.json'))
+    for fn in song_files:
+        with open(fn, 'r') as fp:
+            song_data = json.load(fp)
+            s = Song(song_data['song'])
+            tourney.songs[s.s_id] = s
+            del song_data
+
+    # Player info
+    player_files = glob.glob(os.path.join(root, 'entrant_info', '*.json'))
+    for fn in player_files:
+        with open(fn, 'r') as fp:
+            player_data = json.load(fp)
+            p = Player(player_data['entrant'])
+            tourney.players[p.e_id] = p
+            del player_data
+
+    # Score data
+    if not jit:
+        score_files = glob.glob(os.path.join(root, 'song_scores', '*.json'))
+        for fn in score_files:
+            with open(fn, 'r') as fp:
+                score_data = json.load(fp)
+                tourney.load_score_data(score_data['scores'])
+                del score_data
+
+    return tourney
+
+
+def process(src='itl'):
     print('========================================================================')
     print(f'=== Scobility {_VERSION}')
     print('========================================================================')
     print()
     print('========================================================================')
     print('=== Loading data...')
-
-    if not os.path.exists('itl_data'):
-        raise FileNotFoundError('ITL tournament data scrape needs to be unpacked to /itl_data!')
-
-    # Song info
-    song_files = glob.glob('itl_data/song_info/*.json')
-    for fn in song_files:
-        with open(fn, 'r') as fp:
-            song_data = json.load(fp)
-            s = Song(song_data['song'])
-            itl.songs[s.s_id] = s
-
-    # Player info
-    player_files = glob.glob('itl_data/entrant_info/*.json')
-    for fn in player_files:
-        with open(fn, 'r') as fp:
-            player_data = json.load(fp)
-            p = Player(player_data['entrant'])
-            itl.players[p.e_id] = p
-
-    # Score data
-    score_files = glob.glob('itl_data/song_scores/*.json')
-    for fn in score_files:
-        with open(fn, 'r') as fp:
-            score_data = json.load(fp)
-            itl.load_score_data(score_data['scores'])
-
-    # Calculate relationships
+    if src.lower() == 'itl':
+        # https://github.com/G-Wen/itl_history
+        jit = False
+        tourney = load_json_data(root='itl_data', jit=jit)
+    elif src.lower() == '3ic':
+        # Privately provided
+        jit = True
+        tourney = load_json_data(root='3ic_data', jit=jit)
     print('========================================================================')
     print('=== Setting up relationships...')
-    itl.setup_relationships()
+    tourney.setup_relationships()
     print('========================================================================')
     print('=== Calculating relationships...')
-    itl.calc_relationships(verbal=False)
+    if jit:
+        tourney.calc_relationships_jit(src='3ic_data/song_scores', verbal=False)
+    else:
+        tourney.calc_relationships(verbal=False)
     print('========================================================================')
     print('=== Setting up closest-neighbor initial order...')
-    itl.order_songs_initial(verbal=False, visual=False)
+    tourney.order_songs_initial(verbal=False, visual=False)
     print('========================================================================')
     print('=== Bubbling out non-monotonicities...')
-    itl.order_refine_monotonic(verbal=False, visual=False)
+    tourney.order_refine_monotonic(verbal=False, visual=False)
     print('========================================================================')
     print('=== Refining spice ranking using neighborhood influence...')
-    itl.order_refine_by_spice(verbal=False, visual=False)
+    tourney.order_refine_by_spice(verbal=True, visual=False)
     print('========================================================================')
     print('=== Spice ranking calculation complete!...')
     # itl.view_spice_ranking()
-    with open('itl_data/spice_ranking.txt', 'w', encoding='utf-8') as fp:
-        itl.view_spice_ranking(fp)
+    with open(f'{src}_data/spice_ranking.txt', 'w', encoding='utf-8') as fp:
+        tourney.view_spice_ranking(fp)
 
     # Store (and re-load?)
     # with open('scobility_itl.json', 'w') as fp:
@@ -753,28 +902,28 @@ def process_itl():
 
     print('========================================================================')
     print('=== Performing scobility calculations...')
-    for p in itl.players.values():
+    for p in tourney.players.values():
         try:
-            itl.calc_player_scobility(p, dst_dir='itl_data/scobility', verbal=False, visual=False)
+            tourney.calc_player_scobility(p, dst_dir=f'{src}_data/scobility', verbal=False, visual=False)
         except Exception as e:
             print(f'Scobility calculation failed for {p} (probably due to lack of sufficient score data)', file=sys.stderr)
             print(e, file=sys.stderr)
     print('========================================================================')
     print('=== Ranking players by scobility...')
     # itl.view_scobility_ranking()
-    with open('itl_data/scobility_ranking.txt', 'w', encoding='utf-8') as fp:
-        itl.view_scobility_ranking(fp)
+    with open(f'{src}_data/scobility_ranking.txt', 'w', encoding='utf-8') as fp:
+        tourney.view_scobility_ranking(fp)
     print('========================================================================')
     print('=== Ranking players by tourney performance...')
     # itl.view_tourney_ranking()
-    with open('itl_data/tourney_ranking.txt', 'w', encoding='utf-8') as fp:
-        itl.view_tourney_ranking(fp)
+    with open(f'{src}_data/tourney_ranking.txt', 'w', encoding='utf-8') as fp:
+        tourney.view_tourney_ranking(fp)
     print('========================================================================')
     print('=== Done!')
 
-    return itl
+    return tourney
 
 
 if __name__ == '__main__':
-    process_itl()
+    process(src='3ic')
     
