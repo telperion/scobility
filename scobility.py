@@ -3,6 +3,7 @@
 import json
 import glob
 import os
+import re
 import sys
 import gc
 from io import StringIO
@@ -16,7 +17,7 @@ from enum import IntEnum
 from dataclasses import dataclass, field
 from typing import List
 
-_VERSION = 'v0.96'
+_VERSION = 'v0.97'
 _VERBAL = False
 _VISUAL = False
 
@@ -31,7 +32,7 @@ class Clear(IntEnum):
 
 @dataclass
 class Score:
-    SCORE_SCALAR = 0.000001
+    SCORE_SCALAR = 0.0001
 
     s_id: int = -1
     e_id: int = -1
@@ -102,20 +103,38 @@ class Song:
     spice: float = None                             # Not a Dune reference. capsaicin not cinnamon
 
     def __init__(self, data: dict):
-        self.s_id = data['song_id']
-        self.hash = data['song_hash']
+        try:
+            self.s_id = data['song_id']
+            self.hash = data['song_hash']
 
-        r = data['song_title_romaji'].strip()
-        self.title = data['song_title'] + ((r != '') and f' ({r})' or '')
-        
-        r = data['song_subtitle_romaji'].strip()
-        self.subtitle = data['song_subtitle'] + ((r != '') and f' ({r})' or '')
+            r = data['song_title_romaji'].strip()
+            self.title = data['song_title'] + ((r != '') and f' ({r})' or '')
+            
+            r = data['song_subtitle_romaji'].strip()
+            self.subtitle = data['song_subtitle'] + ((r != '') and f' ({r})' or '')
 
-        r = data['song_artist_romaji'].strip()
-        self.artist = data['song_artist'] + ((r != '') and f' ({r})' or '')
+            r = data['song_artist_romaji'].strip()
+            self.artist = data['song_artist'] + ((r != '') and f' ({r})' or '')
 
-        self.meter = data['song_meter']
-        self.slot = data['song_difficulty']
+            self.meter = data['song_meter']
+            self.slot = data['song_difficulty']
+            self.playstyle = 1      # SP only
+        except:
+            self.s_id = data['id']
+            self.hash = data['hash']
+
+            r = data['titleRomaji'].strip()
+            self.title = data['title'] + ((r != '') and f' ({r})' or '')
+            
+            r = data['subtitleRomaji'].strip()
+            self.subtitle = data['subtitle'] + ((r != '') and f' ({r})' or '')
+
+            r = data['artistRomaji'].strip()
+            self.artist = data['artist'] + ((r != '') and f' ({r})' or '')
+
+            self.meter = data['meter']
+            self.slot = data['difficulty']
+            self.playstyle = data['playstyle']
 
         self.scores = {}
         self.spice = None
@@ -159,9 +178,15 @@ class Player:
     tourney_power: float = None
 
     def __init__(self, data: dict):
-        self.name = data['members_name']
-        self.e_id = data['entrant_id']
-        self.g_id = data['entrant_members_id']
+        try:
+            self.name = data['members_name']
+            self.e_id = data['entrant_id']
+            self.g_id = data['entrant_members_id']
+        except:
+            self.name = data['name']
+            self.e_id = data['id']
+            self.g_id = data['membersId']
+            
         self.scores = {}
         self.scobility = None
         self.comfort_zone = None
@@ -403,12 +428,21 @@ class Tournament:
 
     def load_score_data(self, score_data: list, assign_to_player: bool = True):
         for s_data in score_data:
-            s = Score(
-                s_id = s_data['song_id'],
-                e_id = s_data['entrant_id'],
-                clear = Clear(s_data['score_best_clear_type']),
-                value = 1 - s_data['score_ex'] * Score.SCORE_SCALAR
-            )
+            try:
+                s = Score(
+                    s_id = s_data['song_id'],
+                    e_id = s_data['entrant_id'],
+                    clear = Clear(s_data['score_best_clear_type']),
+                    value = 1 - s_data['score_ex'] * Score.SCORE_SCALAR
+                )
+            except:
+                s = Score(
+                    s_id = s_data['chartId'],
+                    e_id = s_data['entrantId'],
+                    clear = Clear(s_data['clearType']),
+                    value = 1 - s_data['ex'] * Score.SCORE_SCALAR
+                )
+
             if s.s_id in self.songs:
                 self.songs[s.s_id].scores[s.e_id] = s
             if assign_to_player and (s.e_id in self.players):
@@ -730,7 +764,7 @@ class Tournament:
             print(f"{np.log2(s.spice):5.3f}🌶 {str(s):>60s}", file=fp or sys.stdout)
 
 
-    def calc_player_scobility(self, player: Player, dst_dir=None, verbal=_VERBAL, visual=_VISUAL):
+    def calc_player_scobility(self, player: Player, dst_dir=None, verbal=_VERBAL, visual=_VISUAL, use_player_name=False):
         scores = np.full((len(self.ordering),), np.nan)
         spices = np.full((len(self.ordering),), np.nan)
 
@@ -779,7 +813,10 @@ class Tournament:
         plt.ylabel('Score quality')
         plt.title(f'Scobility {_VERSION} plot for {player}\nRating: $\\bf{{{player.scobility:0.3f}}}$')
         if dst_dir is not None:
-            plt.savefig(os.path.join(dst_dir, f'{player.e_id}.png'))
+            if use_player_name:
+                plt.savefig(os.path.join(dst_dir, f'{player.e_id}-{player.name}.png'))
+            else:
+                plt.savefig(os.path.join(dst_dir, f'{player.e_id}.png'))
         if visual:
             plt.show()
         plt.close('all')
@@ -801,7 +838,11 @@ class Tournament:
             print(f'{(1 - player.scores[s.s_id].value)*100:5.2f}% on {s} (Quality parameter: {v:0.3f})', file=stats)
 
         if dst_dir is not None:
-            with open(os.path.join(dst_dir, f'{player.e_id}.txt'), 'w', encoding='utf-8') as fp:
+            if use_player_name:
+                dst_log = os.path.join(dst_dir, f'{player.e_id}-{player.name}.txt')
+            else:
+                dst_log = os.path.join(dst_dir, f'{player.e_id}.txt')
+            with open(dst_log, 'w', encoding='utf-8') as fp:
                 fp.write(stats.getvalue())
         if verbal:
             print(stats.getvalue())
@@ -854,17 +895,22 @@ def load_json_data(root='itl_data', jit=False):
     return tourney
 
 
-def process(src='itl'):
+def process(src='itl2023'):
     print('========================================================================')
     print(f'=== Scobility {_VERSION}')
     print('========================================================================')
     print()
     print('========================================================================')
     print('=== Loading data...')
-    if src.lower() == 'itl':
+    if src.lower() == 'itl2022':
         # https://github.com/G-Wen/itl_history
         jit = False
         tourney = load_json_data(root='itl_data', jit=jit)
+    elif src.lower() == 'itl2023':
+        # Personally scraped
+        jit = False
+        latest_itl2023 = sorted([d for d in os.listdir('itl2023_data') if re.match('^\d+$', d)])[-1]
+        tourney = load_json_data(root=os.path.join('itl2023_data', latest_itl2023), jit=jit)
     elif src.lower() == '3ic':
         # Privately provided
         jit = True
@@ -904,7 +950,7 @@ def process(src='itl'):
     print('=== Performing scobility calculations...')
     for p in tourney.players.values():
         try:
-            tourney.calc_player_scobility(p, dst_dir=f'{src}_data/scobility', verbal=False, visual=False)
+            tourney.calc_player_scobility(p, dst_dir=f'{src}_data/scobility', verbal=False, visual=False, use_player_name=True)
         except Exception as e:
             print(f'Scobility calculation failed for {p} (probably due to lack of sufficient score data)', file=sys.stderr)
             print(e, file=sys.stderr)
@@ -925,5 +971,5 @@ def process(src='itl'):
 
 
 if __name__ == '__main__':
-    process(src='3ic')
+    process(src='itl2023')
     
