@@ -9,15 +9,17 @@ import gc
 from io import StringIO
 from functools import reduce
 from warnings import warn
+from datetime import datetime as dt, timedelta as td
 
 import numpy as np
 from matplotlib import pyplot as plt
+import hsluv
 
 from enum import IntEnum
 from dataclasses import dataclass, field
 from typing import List
 
-_VERSION = 'v0.97'
+_VERSION = 'v0.972'
 _VERBAL = False
 _VISUAL = False
 
@@ -36,6 +38,8 @@ class Score:
 
     s_id: int = -1
     e_id: int = -1
+    plays: int = 1
+    last_played: dt = None
     clear: Clear = Clear.PASS
     value: float = 0
 
@@ -43,6 +47,8 @@ class Score:
         return {
             's_id': self.s_id,
             'e_id': self.e_id,
+            'plays': self.plays,
+            'last_played': self.last_played and self.last_played.strftime('%Y-%m-%dT%H:%M:%S.%f%Z'),
             'clear': int(self.clear),
             'value': self.value
         }
@@ -51,6 +57,8 @@ class Score:
     def load(cls, data):
         cls.s_id = data['s_id']
         cls.e_id = data['e_id']
+        cls.plays = data.get('plays', 1)
+        cls.last_played = data.get('last_played')
         cls.clear = Clear(data['clear'])
         cls.value = data['value']
 
@@ -99,6 +107,7 @@ class Song:
     artist: str = ''
     meter: float = 0
     slot: str = 'Challenge'
+    value: float = 0                                # if the tourney specifies varying point values for charts
     scores: dict = field(default_factory=dict)      # e_id: Score
     spice: float = None                             # Not a Dune reference. capsaicin not cinnamon
 
@@ -106,6 +115,7 @@ class Song:
         try:
             self.s_id = data['song_id']
             self.hash = data['song_hash']
+            self.value = data['song_points']
 
             r = data['song_title_romaji'].strip()
             self.title = data['song_title'] + ((r != '') and f' ({r})' or '')
@@ -122,6 +132,7 @@ class Song:
         except:
             self.s_id = data['id']
             self.hash = data['hash']
+            self.value = data['points']
 
             r = data['titleRomaji'].strip()
             self.title = data['title'] + ((r != '') and f' ({r})' or '')
@@ -148,6 +159,7 @@ class Song:
             'artist': self.artist,
             'meter': self.meter,
             'slot': self.slot,
+            'value': self.value,
             'spice': self.spice
         }
 
@@ -160,10 +172,22 @@ class Song:
         cls.artist = data['artist']
         cls.meter = data['meter']
         cls.slot = data['slot']
+        cls.value = data['value']
         cls.spice = data['spice']
 
     def __str__(self):
-        return f"#{self.s_id} {self.title} ({self.slot} {self.meter})"
+        return f"#{self.s_id} {self.full_title} ({self.slot} {self.meter}) ({self.value} max pts.)"
+
+    @property
+    def full_title(self):
+        if len(self.subtitle) > 0:
+            return f'{self.title} {self.subtitle}'
+        else:
+            return f'{self.title}'
+
+    @property
+    def name(self):
+        return f"#{self.s_id} {self.full_title} ({self.slot} {self.meter})"
 
 
 @dataclass
@@ -175,6 +199,7 @@ class Player:
 
     scobility: float = None
     comfort_zone: float = None
+    timing_power: float = None
     tourney_power: float = None
 
     def __init__(self, data: dict):
@@ -190,6 +215,7 @@ class Player:
         self.scores = {}
         self.scobility = None
         self.comfort_zone = None
+        self.timing_power = None
         self.tourney_power = None
 
     def dump(self):
@@ -199,6 +225,7 @@ class Player:
             'g_id': self.g_id,
             'scobility': self.scobility,
             'comfort_zone': self.comfort_zone,
+            'timing_power': self.timing_power,
             'tourney_power': self.tourney_power
         }
 
@@ -209,6 +236,7 @@ class Player:
         cls.g_id = data['g_id']
         cls.scobility = data['scobility']
         cls.comfort_zone = data['comfort_zone']
+        cls.timing_power = data['timing_power']
         cls.tourney_power = data['tourney_power']
 
     def __str__(self):
@@ -355,6 +383,10 @@ class Tournament:
     SCOBILITY_WINDOW_UPPER = 6                      # Incorporate this many higher scobility readings
     PERFECT_OFFSET = 0.003                          # Push scores away from logarithmic asymptote
     MAX_TOURNEY_POWER = 100                         # idk, I need a value
+    RANKING_CHART_COUNT = 75                        # Only the top N of charts are considered for tourney ranking points
+    POINT_CURVE = 'itl2023'                         # Function that converts %EX to % of points earned
+    MAX_HEADTAIL_QUALITY = 5                        # Maximum number of highest/lowest score quality callouts (N highest & N lowest)
+    MAX_RP_RECOMMENDATIONS = 10                     # Maximum number of tourney ranking point recovery recommendations to return
 
     players: dict = field(default_factory=dict)         # e_id: Player
     songs: dict = field(default_factory=dict)           # s_id: Song
@@ -426,6 +458,16 @@ class Tournament:
         return reduce(Tournament.link_through, links)
 
 
+    @staticmethod
+    def colorize_dates(dates: List[float], alpha: int = 210) -> List[str]:
+        dates_days = [round(d / 86400) for d in dates]
+        dates_unique = sorted(list(set(dates_days)))
+        colors_ref = [hsluv.hsluv_to_hex([345, 100 * saturation, 60 * np.sqrt(saturation)]) + f'{alpha:02x}' for saturation in np.linspace(1, 0, len(dates_unique))[::-1]]
+        dates_match = [dates_unique.index(v) for v in dates_days]
+        colors = [colors_ref[i] for i in dates_match]
+        return colors
+
+
     def load_score_data(self, score_data: list, assign_to_player: bool = True):
         for s_data in score_data:
             try:
@@ -436,9 +478,15 @@ class Tournament:
                     value = 1 - s_data['score_ex'] * Score.SCORE_SCALAR
                 )
             except:
+                if 'lastUpdated' in s_data:
+                    s_dt = dt.strptime(s_data['lastUpdated'], '%Y-%m-%dT%H:%M:%S.%fZ')
+                else:
+                    s_dt = None
                 s = Score(
                     s_id = s_data['chartId'],
                     e_id = s_data['entrantId'],
+                    plays = s_data.get('totalPasses', 1),
+                    last_played = s_dt,
                     clear = Clear(s_data['clearType']),
                     value = 1 - s_data['ex'] * Score.SCORE_SCALAR
                 )
@@ -764,13 +812,124 @@ class Tournament:
             print(f"{np.log2(s.spice):5.3f}🌶 {str(s):>60s}", file=fp or sys.stdout)
 
 
-    def calc_player_scobility(self, player: Player, dst_dir=None, verbal=_VERBAL, visual=_VISUAL, use_player_name=False):
+    def calc_point_curve(self, ex: np.ndarray) -> np.ndarray:
+        if self.POINT_CURVE == 'itl2023':
+            x = ex * 100
+            v = np.log(np.clip(x, a_min=None, a_max=50) + 1)/np.log(1.1032889141348) + np.power(61, (np.clip(x, a_min=50, a_max=None)-50)/50) - 1
+            return v / 100
+        elif self.POINT_CURVE == 'itl2022':
+            x = ex * 100
+            v = np.log(np.clip(x, a_min=None, a_max=75) + 1)/np.log(1.0638215)       + np.power(31, (np.clip(x, a_min=75, a_max=None)-75)/25) - 1
+            return v / 100
+        else:   # Unknown or don't care
+            return 0
+
+    def calc_recommendations(self, player: Player, dst_dir=None, verbal=_VERBAL, visual=_VISUAL, use_player_name=False):
+        if player.scobility is None or player.comfort_zone is None or player.timing_power is None:
+            raise Exception(f'Can\'t recommend charts to {player.name} (#{player.e_id}) without first calculating scobility')
+
         scores = np.full((len(self.ordering),), np.nan)
         spices = np.full((len(self.ordering),), np.nan)
+        values = np.full((len(self.ordering),), np.nan)
 
         for i, s in enumerate(self.ordering):
             if s.s_id in player.scores:
                 scores[i] = player.scores[s.s_id].value
+            if s.spice:
+                spices[i] = s.spice
+                values[i] = s.value
+
+        # The lowest possible score (0%) on the chart with
+        # the lowest spice level will define the (0, 0) point.
+        p_min = np.log2(Tournament.PERFECT_OFFSET + 1)
+        p_max = np.log2(Tournament.PERFECT_OFFSET)
+        p_spices = np.log2(spices)
+        p_scores = np.log2(Tournament.PERFECT_OFFSET + scores) - p_min
+
+        points = np.round(values * self.calc_point_curve(1 - scores))                # Current tournament points (not ranking points!) from this song
+        pred_qual = player.timing_power + p_spices * player.comfort_zone      # Score quality that would bring this chart up to the player's scobility fit
+        # Missing %EX score that would bring this chart up to the player's scobility fit
+        ex_target = np.clip((np.power(2, p_spices - pred_qual)) * (Tournament.PERFECT_OFFSET + 1), a_min=0, a_max=1)
+        pt_access = np.round(values * self.calc_point_curve(1 - ex_target)) - points # Additional point gain (not tournament RP!) from bringing this chart up
+
+        # Draw a best-fit line to calculate the player's strength.
+        # Mostly used to determine the "comfort zone", i.e.
+        # where do you outperform your peers? easier or harder charts?
+        # by observing the slope of the best-fit line.
+        p_played = ~np.isnan(p_scores)
+
+        if sum(p_played) < 5:       # TODO: parameterize this limit
+            raise Exception(f'{player.name} (#{player.e_id}) hasn\'t played enough charts with a known spice rating yet')
+                
+        stats = StringIO()
+        print(f'Scobility {_VERSION} for {player}: {player.scobility:0.3f}🌶', file=stats)
+        if player.comfort_zone > 0:
+            print(f'>>> You outperform your peers on harder charts. (m = {player.comfort_zone:0.3f})', file=stats)
+        else:
+            print(f'>>> You outperform your peers on easier charts. (m = {player.comfort_zone:0.3f})', file=stats)
+
+        # Give various recommendations to the player on which songs to redo,
+        # as well as the target score that brings up the scobility quality
+        # to the player's skill trend.
+        p_quality = p_spices[p_played] - p_scores[p_played]
+        p_songs = np.array(self.ordering)[p_played]
+        p_ranking = [z for z in zip(
+            [s for s in p_songs],
+            [q for q in p_quality],
+            [p for p in points[p_played]],
+            [x for x in ex_target[p_played]],
+            [p for p in pt_access[p_played]]
+        )]
+
+        # Plain ol' "these are your worst/best quality songs so far"
+        p_ranking.sort(key=lambda x: x[1])
+        print(f'\nTop {Tournament.MAX_HEADTAIL_QUALITY} Best Scores for {player}:', file=stats)
+        for z in reversed(p_ranking[-Tournament.MAX_HEADTAIL_QUALITY:]):
+            print(f'{(1 - player.scores[z[0].s_id].value)*100:5.2f}% on {z[0].name}, worth {z[2]:.0f} / {z[0].value:.0f} points (Quality parameter: {z[1]:0.3f})', file=stats)
+        print(f'\nTop {Tournament.MAX_HEADTAIL_QUALITY} Improvement Opportunities for {player}:', file=stats)
+        for z in p_ranking[:Tournament.MAX_HEADTAIL_QUALITY]:
+            print(f'{(1 - player.scores[z[0].s_id].value)*100:5.2f}% on {z[0].name}, worth {z[2]:.0f} / {z[0].value:.0f} points (Quality parameter: {z[1]:0.3f})', file=stats)
+            print(f'>>> Based on your scobility, aim for a score of {(1 - z[3])*100:5.2f}% on {z[0].name}, worth {z[2]+z[4]:.0f} points.', file=stats)
+
+        # What could raise your tourney RP?
+        # First, determine the "top N" cutoff.
+        # TODO: oops this only counts charts that scobility has spice values for
+        points_all = [self.songs[s].value * self.calc_point_curve(1 - v.value) for s, v in player.scores.items()]
+        points_all.sort(reverse=True)
+        tourney_rp_cutoff = points_all[min(len(points_all)-1, Tournament.RANKING_CHART_COUNT)]
+        # Then calculate how much "real" RP gain is achievable.
+        # If the chart wasn't already in the top 75,
+        # catch-up points should be deducted before ranking its impact.
+        p_valuable = [z for z in p_ranking if (z[2] + z[4] >= tourney_rp_cutoff) and (z[4] > 0)]
+        p_valuable.sort(key=lambda z: z[4] + min(z[2]-tourney_rp_cutoff, 0), reverse=True)
+        print(f'\nTop {Tournament.MAX_RP_RECOMMENDATIONS} Tourney RP Improvement Opportunities for {player}:', file=stats)
+        print(f'\tYour current top {Tournament.RANKING_CHART_COUNT} cutoff is {tourney_rp_cutoff:.0f} points.', file=stats)
+        print(f'\tTarget scores are calculated to match your personal current scobility.', file=stats)
+        print(f'\tAchieve the target score on any of the listed charts and gain RP!', file=stats)
+        for z in p_valuable[:Tournament.MAX_RP_RECOMMENDATIONS]:
+            print(f'{z[4] + min(z[2]-tourney_rp_cutoff, 0):+5.0f} RP: Raise {z[0].name} from {(1 - player.scores[z[0].s_id].value)*100:5.2f}% ({z[2]:.0f}pt.) to at least {(1 - z[3])*100:5.2f}% ({z[2]+z[4]:.0f}pt.)', file=stats)
+
+        if dst_dir is not None:
+            if use_player_name:
+                dst_log = os.path.join(dst_dir, f'{player.e_id}-{player.name}.txt')
+            else:
+                dst_log = os.path.join(dst_dir, f'{player.e_id}.txt')
+            with open(dst_log, 'w', encoding='utf-8') as fp:
+                fp.write(stats.getvalue())
+        if verbal:
+            print(stats.getvalue())
+
+    def calc_player_scobility(self, player: Player, dst_dir=None, verbal=_VERBAL, visual=_VISUAL, use_player_name=False):
+        scores = np.full((len(self.ordering),), np.nan)
+        spices = np.full((len(self.ordering),), np.nan)
+        counts = np.full((len(self.ordering),), np.nan)
+        dates  = np.full((len(self.ordering),), np.nan)
+
+        for i, s in enumerate(self.ordering):
+            if s.s_id in player.scores:
+                scores[i] = player.scores[s.s_id].value
+                counts[i] = player.scores[s.s_id].plays
+                dates[i] = (player.scores[s.s_id].last_played - dt.utcfromtimestamp(0)).total_seconds()
             if s.spice:
                 spices[i] = s.spice
 
@@ -786,6 +945,10 @@ class Tournament:
         # where do you outperform your peers? easier or harder charts?
         # by observing the slope of the best-fit line.
         p_played = ~np.isnan(p_scores)
+
+        if sum(p_played) < 5:       # TODO: parameterize this limit
+            raise Exception(f'{player.name} (#{player.e_id}) hasn\'t played enough charts with a known spice rating yet')
+
         a = p_spices[p_played]
         b = p_spices[p_played] - p_scores[p_played]         # Expected to be constant...
         w = a # np.ones_like(a) # 1 - 1/(a + Relationship.WEIGHT_OFFSET)**2
@@ -794,20 +957,34 @@ class Tournament:
         b_eq = coefs @ m
 
         p_quality = p_spices[p_played] - p_scores[p_played]
-        p_songs = np.array(self.ordering)[p_played]
-        p_ranking = [z for z in zip([s for s in p_songs], [q for q in p_quality])]
-        p_ranking.sort(key=lambda x: x[1])
+        p_counts = counts[p_played]
+        p_dates = dates[p_played]
 
         # TODO: derive a volforce-like "tournament power" that rewards
         # playing more songs as well as getting better scores
         # this is a pretty silly first stab at it imo
         player.tourney_power = sum(p_quality) / len(p_quality) * np.sqrt(len(p_quality) / len(self.ordering)) * Tournament.MAX_TOURNEY_POWER
         player.scobility = sum(p_quality) / len(p_quality)  # Simple average...
+        player.timing_power = coefs[0]
         player.comfort_zone = coefs[1]
 
         # Plot score quality by chart spice level
+        pts_ordered = sorted(zip(
+            p_dates,
+            a,
+            b,
+            np.power(np.clip(p_counts-0.6, a_min=0, a_max=None), 0.6)*48,
+            Tournament.colorize_dates(p_dates)
+        ), key=lambda x: x[0])
+        # Ensure the points are plotted from oldest to newest
+        # TODO: point size scaling and specialized color gradient
         plt.subplots(figsize=(6, 6))
-        plt.scatter(a, b, color='tab:pink')
+        plt.scatter(
+            [p[1] for p in pts_ordered],
+            [p[2] for p in pts_ordered],
+            s=[p[3] for p in pts_ordered],
+            c=[p[4] for p in pts_ordered]
+        )
         plt.plot(a, b_eq, color='tab:blue')
         plt.xlabel('Chart spice level')
         plt.ylabel('Score quality')
@@ -820,32 +997,6 @@ class Tournament:
         if visual:
             plt.show()
         plt.close('all')
-
-        stats = StringIO()
-        print(f'Scobility {_VERSION} for {player}: {player.scobility:0.3f}🌶', file=stats)
-        if player.comfort_zone > 0:
-            print(f'>>> You outperform your peers on harder charts. (m = {player.comfort_zone:0.3f})', file=stats)
-        else:
-            print(f'>>> You outperform your peers on easier charts. (m = {player.comfort_zone:0.3f})', file=stats)
-
-        # TODO: back out what an "appropriate" score for this player
-        # on the listed songs would be
-        print(f'\nTop 5 Best Scores for {player}:', file=stats)
-        for s, v in reversed(p_ranking[-5:]):
-            print(f'{(1 - player.scores[s.s_id].value)*100:5.2f}% on {s} (Quality parameter: {v:0.3f})', file=stats)
-        print(f'\nTop 5 Improvement Opportunities for {player}:', file=stats)
-        for s, v in p_ranking[:5]:
-            print(f'{(1 - player.scores[s.s_id].value)*100:5.2f}% on {s} (Quality parameter: {v:0.3f})', file=stats)
-
-        if dst_dir is not None:
-            if use_player_name:
-                dst_log = os.path.join(dst_dir, f'{player.e_id}-{player.name}.txt')
-            else:
-                dst_log = os.path.join(dst_dir, f'{player.e_id}.txt')
-            with open(dst_log, 'w', encoding='utf-8') as fp:
-                fp.write(stats.getvalue())
-        if verbal:
-            print(stats.getvalue())
 
 
     def view_scobility_ranking(self, fp=None):
@@ -951,6 +1102,7 @@ def process(src='itl2023'):
     for p in tourney.players.values():
         try:
             tourney.calc_player_scobility(p, dst_dir=f'{src}_data/scobility', verbal=False, visual=False, use_player_name=True)
+            tourney.calc_recommendations(p,  dst_dir=f'{src}_data/scobility', verbal=False, visual=False, use_player_name=True)
         except Exception as e:
             print(f'Scobility calculation failed for {p} (probably due to lack of sufficient score data)', file=sys.stderr)
             print(e, file=sys.stderr)
