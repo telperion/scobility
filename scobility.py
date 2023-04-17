@@ -878,7 +878,10 @@ class Tournament:
         # Determine the "top N" cutoff.
         points_all = [self.songs[s].value * self.calc_point_curve(100 - 100*v.value) * 0.01 for s, v in player.scores.items()]
         points_all.sort(reverse=True)
-        tourney_rp_cutoff = points_all[min(len(points_all)-1, Tournament.RANKING_CHART_COUNT)]
+        if len(points_all) < Tournament.RANKING_CHART_COUNT:
+            tourney_rp_cutoff = 0
+        else:
+            tourney_rp_cutoff = points_all[Tournament.RANKING_CHART_COUNT]
 
         points = np.round(values * self.calc_point_curve(100 - 100*scores) * 0.01)          # Current tournament points (not ranking points!) from this song
         pred_qual = player.timing_power + p_spices * player.comfort_zone                    # Score quality that would bring this chart up to the player's scobility fit
@@ -919,6 +922,7 @@ class Tournament:
             [v for v in scores[p_played]],
             [x for x in ex_rp_hit[p_played]],
             [q for q in need_qual[p_played]],
+            [q for q in pred_qual[p_played]],
         )]
 
         # Plain ol' "these are your worst/best quality songs so far"
@@ -960,11 +964,15 @@ class Tournament:
         #     (z[4] <= 100) and           # The score is possible (i.e., <= 100% EX)
         #     (z[3] < tourney_rp_cutoff)  # The points currently held are under the RP cutoff
         # ]
-        p_almost_valuable.sort(key=lambda z: z[7]-z[1])
+        p_almost_valuable.sort(key=lambda z: z[7]-z[8])
         n_recs_available = min(n_rp_rec, len(p_valuable) + len(p_almost_valuable))
 
         print(f'\nTop {n_recs_available} Tourney RP Improvement Opportunities for {player}:', file=stats)
-        print(f'\tYour current top {Tournament.RANKING_CHART_COUNT} cutoff is {tourney_rp_cutoff:.0f} points.', file=stats)
+        if tourney_rp_cutoff == 0:
+            print(f'\tYour top {Tournament.RANKING_CHART_COUNT} still has room for completely new additions!', file=stats)
+            print('\tBut, if you want scobility recommendations on what to replay, read on...', file=stats)
+        else:
+            print(f'\tYour current top {Tournament.RANKING_CHART_COUNT} cutoff is {tourney_rp_cutoff:.0f} points.', file=stats)
         print(f'\tTarget scores are calculated to match your personal current scobility.', file=stats)
         print(f'\tAchieve the target score on any of the listed charts and gain RP!', file=stats)
         for z in p_valuable[:n_rp_rec]:
