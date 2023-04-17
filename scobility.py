@@ -19,7 +19,7 @@ from enum import IntEnum
 from dataclasses import dataclass, field
 from typing import List
 
-_VERSION = 'v0.972'
+_VERSION = 'v0.973'
 _VERBAL = False
 _VISUAL = False
 
@@ -812,17 +812,46 @@ class Tournament:
             print(f"{np.log2(s.spice):5.3f}🌶 {str(s):>60s}", file=fp or sys.stdout)
 
 
-    def calc_point_curve(self, ex: np.ndarray) -> np.ndarray:
+    def calc_point_curve(self, v: np.ndarray) -> np.ndarray:
         if self.POINT_CURVE == 'itl2023':
-            x = ex * 100
-            v = np.log(np.clip(x, a_min=None, a_max=50) + 1)/np.log(1.1032889141348) + np.power(61, (np.clip(x, a_min=50, a_max=None)-50)/50) - 1
-            return v / 100
+            log_base = 1.1032889141348
+            pow_base = 61
+            inflect = 50
         elif self.POINT_CURVE == 'itl2022':
-            x = ex * 100
-            v = np.log(np.clip(x, a_min=None, a_max=75) + 1)/np.log(1.0638215)       + np.power(31, (np.clip(x, a_min=75, a_max=None)-75)/25) - 1
-            return v / 100
-        else:   # Unknown or don't care
-            return 0
+            log_base = 1.0638215
+            pow_base = 31
+            inflect = 75
+        else:
+            return np.zeros_like(v)
+
+        v_lo = np.clip(v, a_min=None, a_max=inflect)
+        v_hi = np.clip(v, a_min=inflect, a_max=None)
+        
+        return \
+            np.log(v_lo + 1) / np.log(log_base) + \
+            np.power(pow_base, (v_hi-inflect)/(100-inflect)) - 1
+    
+
+    def calc_point_curve_inv(self, p: np.ndarray) -> np.ndarray:
+        if self.POINT_CURVE == 'itl2023':
+            log_base = 1.1032889141348
+            pow_base = 61
+            inflect = 50
+        elif self.POINT_CURVE == 'itl2022':
+            log_base = 1.0638215
+            pow_base = 31
+            inflect = 75
+        else:
+            return np.zeros_like(p)
+
+        piecewise_border = np.round(np.log(inflect + 1)/np.log(log_base) - 1, decimals=3)
+        
+        v = np.zeros_like(p)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            v[p <= piecewise_border] = np.power(log_base, p[p <= piecewise_border]) - 1
+            v[p >  piecewise_border] = (100-inflect)*np.log(p[p > piecewise_border] - piecewise_border)/np.log(pow_base) + inflect
+        return v
+
 
     def calc_recommendations(self, player: Player, dst_dir=None, verbal=_VERBAL, visual=_VISUAL, use_player_name=False):
         if player.scobility is None or player.comfort_zone is None or player.timing_power is None:
@@ -845,12 +874,20 @@ class Tournament:
         p_max = np.log2(Tournament.PERFECT_OFFSET)
         p_spices = np.log2(spices)
         p_scores = np.log2(Tournament.PERFECT_OFFSET + scores) - p_min
+        
+        # Determine the "top N" cutoff.
+        points_all = [self.songs[s].value * self.calc_point_curve(100 - 100*v.value) * 0.01 for s, v in player.scores.items()]
+        points_all.sort(reverse=True)
+        tourney_rp_cutoff = points_all[min(len(points_all)-1, Tournament.RANKING_CHART_COUNT)]
 
-        points = np.round(values * self.calc_point_curve(1 - scores))                # Current tournament points (not ranking points!) from this song
-        pred_qual = player.timing_power + p_spices * player.comfort_zone      # Score quality that would bring this chart up to the player's scobility fit
+        points = np.round(values * self.calc_point_curve(100 - 100*scores) * 0.01)          # Current tournament points (not ranking points!) from this song
+        pred_qual = player.timing_power + p_spices * player.comfort_zone                    # Score quality that would bring this chart up to the player's scobility fit
         # Missing %EX score that would bring this chart up to the player's scobility fit
         ex_target = np.clip((np.power(2, p_spices - pred_qual)) * (Tournament.PERFECT_OFFSET + 1), a_min=0, a_max=1)
-        pt_access = np.round(values * self.calc_point_curve(1 - ex_target)) - points # Additional point gain (not tournament RP!) from bringing this chart up
+        pt_access = np.round(values * self.calc_point_curve(100 - 100*ex_target) * 0.01) - points  # Additional point gain (not tournament RP!) from bringing this chart up
+        ex_rp_hit = 1 - 0.01*self.calc_point_curve_inv(100 * tourney_rp_cutoff / values)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            need_qual = p_spices - np.log2(Tournament.PERFECT_OFFSET + ex_rp_hit) + p_min
 
         # Draw a best-fit line to calculate the player's strength.
         # Mostly used to determine the "comfort zone", i.e.
@@ -878,36 +915,68 @@ class Tournament:
             [q for q in p_quality],
             [p for p in points[p_played]],
             [x for x in ex_target[p_played]],
-            [p for p in pt_access[p_played]]
+            [p for p in pt_access[p_played]],
+            [v for v in scores[p_played]],
+            [x for x in ex_rp_hit[p_played]],
+            [q for q in need_qual[p_played]],
         )]
 
         # Plain ol' "these are your worst/best quality songs so far"
         p_ranking.sort(key=lambda x: x[1])
         print(f'\nTop {Tournament.MAX_HEADTAIL_QUALITY} Best Scores for {player}:', file=stats)
         for z in reversed(p_ranking[-Tournament.MAX_HEADTAIL_QUALITY:]):
-            print(f'{(1 - player.scores[z[0].s_id].value)*100:5.2f}% on {z[0].name}, worth {z[2]:.0f} / {z[0].value:.0f} points (Quality parameter: {z[1]:0.3f})', file=stats)
+            print(f'{(1 - z[5])*100:5.2f}% on {z[0].name}, worth {z[2]:.0f} / {z[0].value:.0f} points (Quality parameter: {z[1]:0.3f})', file=stats)
         print(f'\nTop {Tournament.MAX_HEADTAIL_QUALITY} Improvement Opportunities for {player}:', file=stats)
         for z in p_ranking[:Tournament.MAX_HEADTAIL_QUALITY]:
-            print(f'{(1 - player.scores[z[0].s_id].value)*100:5.2f}% on {z[0].name}, worth {z[2]:.0f} / {z[0].value:.0f} points (Quality parameter: {z[1]:0.3f})', file=stats)
+            print(f'{(1 - z[5])*100:5.2f}% on {z[0].name}, worth {z[2]:.0f} / {z[0].value:.0f} points (Quality parameter: {z[1]:0.3f})', file=stats)
             print(f'>>> Based on your scobility, aim for a score of {(1 - z[3])*100:5.2f}% on {z[0].name}, worth {z[2]+z[4]:.0f} points.', file=stats)
 
         # What could raise your tourney RP?
         # First, determine the "top N" cutoff.
-        # TODO: oops this only counts charts that scobility has spice values for
-        points_all = [self.songs[s].value * self.calc_point_curve(1 - v.value) for s, v in player.scores.items()]
-        points_all.sort(reverse=True)
-        tourney_rp_cutoff = points_all[min(len(points_all)-1, Tournament.RANKING_CHART_COUNT)]
         # Then calculate how much "real" RP gain is achievable.
         # If the chart wasn't already in the top 75,
         # catch-up points should be deducted before ranking its impact.
         p_valuable = [z for z in p_ranking if (z[2] + z[4] >= tourney_rp_cutoff) and (z[4] > 0)]
         p_valuable.sort(key=lambda z: z[4] + min(z[2]-tourney_rp_cutoff, 0), reverse=True)
-        print(f'\nTop {Tournament.MAX_RP_RECOMMENDATIONS} Tourney RP Improvement Opportunities for {player}:', file=stats)
+        n_rp_rec = int(np.sqrt(len(points_all)))
+        # If there aren't enough charts with catch-up points,
+        # start recommending charts that are just above the scobility trend,
+        # as well as what EX score would be required to gain RP.
+        p_almost_valuable = [z for z in p_ranking if
+            (z[4] < 0) and                  # The current score is already at or above scobility trend
+            (z[2] <= tourney_rp_cutoff) and # The points currently held are under the RP cutoff 
+            (z[6] > 0) and                  # The score is possible (i.e., <= 100% EX)
+            (z[6] < z[5])                   # The score required to reach RP would be an improvement
+        ]
+        # p_songs_worth = [(
+        #     s,
+        #     100 * 100 - v.value,
+        #     self.calc_point_curve(100 * 100 - v.value),
+        #     self.songs[s].value,
+        #     self.calc_point_curve_inv(100 * tourney_rp_cutoff / self.songs[s].value)
+        # ) for s, v in player.scores.items() if self.songs[s].value > 0]
+        # p_almost_valuable = [z for z in p_songs_worth if 
+        #     (z[4] > z[1]) and           # The score required to reach RP would be an improvement
+        #     (z[4] <= 100) and           # The score is possible (i.e., <= 100% EX)
+        #     (z[3] < tourney_rp_cutoff)  # The points currently held are under the RP cutoff
+        # ]
+        p_almost_valuable.sort(key=lambda z: z[7]-z[1])
+        n_recs_available = min(n_rp_rec, len(p_valuable) + len(p_almost_valuable))
+
+        print(f'\nTop {n_recs_available} Tourney RP Improvement Opportunities for {player}:', file=stats)
         print(f'\tYour current top {Tournament.RANKING_CHART_COUNT} cutoff is {tourney_rp_cutoff:.0f} points.', file=stats)
         print(f'\tTarget scores are calculated to match your personal current scobility.', file=stats)
         print(f'\tAchieve the target score on any of the listed charts and gain RP!', file=stats)
-        for z in p_valuable[:Tournament.MAX_RP_RECOMMENDATIONS]:
-            print(f'{z[4] + min(z[2]-tourney_rp_cutoff, 0):+5.0f} RP: Raise {z[0].name} from {(1 - player.scores[z[0].s_id].value)*100:5.2f}% ({z[2]:.0f}pt.) to at least {(1 - z[3])*100:5.2f}% ({z[2]+z[4]:.0f}pt.)', file=stats)
+        for z in p_valuable[:n_rp_rec]:
+            print(f'{z[4] + min(z[2]-tourney_rp_cutoff, 0):+5.0f} RP: Raise {z[0].name} from {(1 - z[5])*100:5.2f}% ({z[2]:.0f}pt.) to at least {(1 - z[3])*100:5.2f}% ({z[2]+z[4]:.0f}pt.)', file=stats)
+        if len(p_valuable) < n_rp_rec:
+            print(f'\tThat\'s all the raises scobility can directly identify for now.', file=stats)
+            print(f'\tYour scores on the following charts already meet your personal current scobility,', file=stats)
+            print(f'\tbut if you can raise them a bit more, you could gain RP from these too.', file=stats)
+            print(f'\tAnd don\'t forget to try charts you haven\'t played yet!', file=stats)
+            for z in p_almost_valuable[:n_rp_rec-len(p_valuable)]:
+                print(f'Raise {z[0].name} from {(1 - z[5])*100:5.2f}% ({z[2]:.0f}pt.) to at least {(1 - z[6])*100:5.2f}% (New quality parameter: {z[7]:0.3f})', file=stats)
+        
 
         if dst_dir is not None:
             if use_player_name:
