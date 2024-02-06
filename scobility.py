@@ -6,6 +6,8 @@ import os
 import re
 import sys
 import gc
+import traceback as tb
+import unicodedata
 from io import StringIO
 from functools import reduce
 from warnings import warn
@@ -22,6 +24,24 @@ from typing import List
 _VERSION = 'v0.973'
 _VERBAL = False
 _VISUAL = False
+
+
+def slugify(value, allow_unicode=False):
+    """
+    https://stackoverflow.com/questions/295135/turn-a-string-into-a-valid-filename
+    Taken from https://github.com/django/django/blob/master/django/utils/text.py
+    Convert to ASCII if 'allow_unicode' is False. Convert spaces or repeated
+    dashes to single dashes. Remove characters that aren't alphanumerics,
+    underscores, or hyphens. Convert to lowercase. Also strip leading and
+    trailing whitespace, dashes, and underscores.
+    """
+    value = str(value)
+    if allow_unicode:
+        value = unicodedata.normalize('NFKC', value)
+    else:
+        value = unicodedata.normalize('NFKD', value).encode('ascii', 'ignore').decode('ascii')
+    value = re.sub(r'[^\w\s-]', '', value)
+    return re.sub(r'[-\s]+', '-', value).strip('-_')
 
 class Clear(IntEnum):
     FAIL = 0
@@ -42,25 +62,31 @@ class Score:
     last_played: dt = None
     clear: Clear = Clear.PASS
     value: float = 0
+    
+    def __init__(self, data):
+        last_played = data.get('last_played')
+        if isinstance(last_played, str):
+            last_played = dt.strptime(last_played, '%Y-%m-%dT%H:%M:%S.%f')
+        self.s_id = data['s_id']
+        self.e_id = data['e_id']
+        self.plays = data.get('plays', 1)
+        self.last_played = last_played
+        self.clear = Clear(data['clear'])
+        self.value = data['value']
 
     def dump(self):
         return {
             's_id': self.s_id,
             'e_id': self.e_id,
             'plays': self.plays,
-            'last_played': self.last_played and self.last_played.strftime('%Y-%m-%dT%H:%M:%S.%f%Z'),
+            'last_played': self.last_played and self.last_played.strftime('%Y-%m-%dT%H:%M:%S.%f'),
             'clear': int(self.clear),
             'value': self.value
         }
     
     @classmethod
     def load(cls, data):
-        cls.s_id = data['s_id']
-        cls.e_id = data['e_id']
-        cls.plays = data.get('plays', 1)
-        cls.last_played = data.get('last_played')
-        cls.clear = Clear(data['clear'])
-        cls.value = data['value']
+        return cls(data)
 
     @staticmethod
     def det_clear(data: dict):
@@ -111,7 +137,10 @@ class Song:
     scores: dict = field(default_factory=dict)      # e_id: Score
     spice: float = None                             # Not a Dune reference. capsaicin not cinnamon
 
-    def __init__(self, data: dict):
+    def __init__(self, data: dict = None):
+        if data is None:
+            return
+
         try:
             self.s_id = data['song_id']
             self.hash = data['song_hash']
@@ -165,15 +194,10 @@ class Song:
 
     @classmethod
     def load(cls, data):
-        cls.s_id = data['s_id']
-        cls.hash = data['hash']
-        cls.title = data['title']
-        cls.subtitle = data['subtitle']
-        cls.artist = data['artist']
-        cls.meter = data['meter']
-        cls.slot = data['slot']
-        cls.value = data['value']
-        cls.spice = data['spice']
+        obj = cls()
+        for fn in ['s_id', 'hash', 'title', 'subtitle', 'artist', 'meter', 'slot', 'value', 'spice']:
+            setattr(obj, fn, data[fn])
+        return obj
 
     def __str__(self):
         return f"#{self.s_id} {self.full_title} ({self.slot} {self.meter}) ({self.value} max pts.)"
@@ -202,7 +226,10 @@ class Player:
     timing_power: float = None
     tourney_power: float = None
 
-    def __init__(self, data: dict):
+    def __init__(self, data: dict = None):
+        if data is None:
+            return
+
         try:
             self.name = data['members_name']
             self.e_id = data['entrant_id']
@@ -231,13 +258,11 @@ class Player:
 
     @classmethod
     def load(cls, data):
-        cls.name = data['name']
-        cls.e_id = data['e_id']
-        cls.g_id = data['g_id']
-        cls.scobility = data['scobility']
-        cls.comfort_zone = data['comfort_zone']
-        cls.timing_power = data['timing_power']
-        cls.tourney_power = data['tourney_power']
+        obj = cls()
+        for fn in ['name', 'e_id', 'g_id', 'scobility', 'comfort_zone', 'timing_power', 'tourney_power']:
+            setattr(obj, fn, data[fn])
+        obj.scores = data.get('scores', {})
+        return obj
 
     def __str__(self):
         return f"{self.name} (#{self.e_id})"
@@ -247,7 +272,7 @@ class Relationship:
     MAX_NEG_LIMIT = 0.3             # i.e., 700,000 min EX score
     MIN_NEG_LIMIT = 0.0002          # i.e., 999,800 max EX score (ONLY for initial score scaling!)
     WEIGHT_OFFSET = 0.5
-    MIN_COMMON_PLAYERS = 10
+    MIN_COMMON_PLAYERS = 6
     
     def __init__(self, x: Song, y: Song):
         self.x = x
@@ -270,13 +295,13 @@ class Relationship:
 
     @classmethod
     def load(cls, data: dict, songs: dict):
-        cls.x = songs[data['x_id']]
-        cls.y = songs[data['y_id']]
-        x_players = set(cls.x.scores)
-        y_players = set(cls.y.scores)
-        cls.e_common = x_players.intersection(y_players)
-        cls.relation = data['relation']
-        cls.strength = data['strength']
+        obj = cls(
+            songs[data['x_id']],
+            songs[data['y_id']]
+        )
+        obj.relation = data['relation']
+        obj.strength = data['strength']
+        return obj
 
 
     def pair_title(self):
@@ -376,7 +401,7 @@ class Relationship:
 @dataclass
 class Tournament:
     MONO_THRESHOLD = 0.999999                       # Monotonicity check
-    MIN_COMMON_PLAYERS = 50                         # For ordering purposes
+    MIN_COMMON_PLAYERS = 20                         # For ordering purposes
     ITERATIONS_MONOTONIC_SORT = 10                  # Bubble sort for correlation factor monotonicity
     ITERATIONS_SCOBILITY_SORT = 500                 # Refining the scobility values and post-sorting
     SCOBILITY_WINDOW_LOWER = 10                     # Incorporate this many lower scobility readings
@@ -398,7 +423,8 @@ class Tournament:
             'songs': [],
             'players': [],
             'scores': [],
-            'relationships': []
+            'relationships': [],
+            'ordering': []
         }
         for s in self.songs.values():
             j['songs'].append(s.dump())
@@ -410,28 +436,38 @@ class Tournament:
             for y, r in y_dict.items():
                 if r.relation is not None:
                     j['relationships'].append(r.dump())
+        j['ordering'] = [s.s_id for s in self.ordering]
 
         return j
 
     @classmethod
     def load(cls, data):
+        obj = cls()
         for s_data in data['songs']:
             s = Song.load(s_data)
-            cls.songs[s.s_id] = s
+            obj.songs[s.s_id] = s
         for p_data in data['players']:
             p = Player.load(p_data)
-            cls.players[p.e_id] = p
+            obj.players[p.e_id] = p
         for v_data in data['scores']:
-            v = Song.load(v_data)
-            if v.s_id in cls.songs:
-                cls.songs[v.s_id].scores[v.e_id] = v
-            if v.e_id in cls.players:
-                cls.players[v.e_id].scores[v.s_id] = v
+            v = Score.load(v_data)
+            if v.s_id in obj.songs:
+                if hasattr(obj.songs[v.s_id], 'scores'):
+                    obj.songs[v.s_id].scores[v.e_id] = v
+                else:
+                    obj.songs[v.s_id].scores = {v.e_id: v}
+            if v.e_id in obj.players:
+                if hasattr(obj.players[v.e_id], 'scores'):
+                    obj.players[v.e_id].scores[v.s_id] = v
+                else:
+                    obj.players[v.e_id].scores = {v.s_id: v}
         for r_data in data['relationships']:
-            r = Relationship.load(r_data, cls.songs)
-            if r.x.s_id not in cls.relationships:
-                cls.relationships[r.x.s_id] = {}
-            cls.relationships[r.x.s_id][r.y.s_id] = r
+            r = Relationship.load(r_data, obj.songs)
+            if r.x.s_id not in obj.relationships:
+                obj.relationships[r.x.s_id] = {}
+            obj.relationships[r.x.s_id][r.y.s_id] = r
+        obj.ordering = [obj.songs[s] for s in data['ordering']]
+        return obj
 
     @staticmethod
     def link_through(a: Relationship, b: Relationship) -> Relationship:
@@ -471,25 +507,25 @@ class Tournament:
     def load_score_data(self, score_data: list, assign_to_player: bool = True):
         for s_data in score_data:
             try:
-                s = Score(
-                    s_id = s_data['song_id'],
-                    e_id = s_data['entrant_id'],
-                    clear = Clear(s_data['score_best_clear_type']),
-                    value = 1 - s_data['score_ex'] * Score.SCORE_SCALAR
-                )
+                s = Score(data={
+                    's_id': s_data['song_id'],
+                    'e_id': s_data['entrant_id'],
+                    'clear': Clear(s_data['score_best_clear_type']),
+                    'value': 1 - s_data['score_ex'] * Score.SCORE_SCALAR
+                })
             except:
                 if 'lastUpdated' in s_data:
                     s_dt = dt.strptime(s_data['lastUpdated'], '%Y-%m-%dT%H:%M:%S.%fZ')
                 else:
                     s_dt = None
-                s = Score(
-                    s_id = s_data['chartId'],
-                    e_id = s_data['entrantId'],
-                    plays = s_data.get('totalPasses', 1),
-                    last_played = s_dt,
-                    clear = Clear(s_data['clearType']),
-                    value = 1 - s_data['ex'] * Score.SCORE_SCALAR
-                )
+                s = Score(data={
+                    's_id': s_data['chartId'],
+                    'e_id': s_data['entrantId'],
+                    'plays': s_data.get('totalPasses', 1),
+                    'last_played': s_dt,
+                    'clear': Clear(s_data['clearType']),
+                    'value': 1 - s_data['ex'] * Score.SCORE_SCALAR
+                })
 
             if s.s_id in self.songs:
                 self.songs[s.s_id].scores[s.e_id] = s
@@ -761,8 +797,14 @@ class Tournament:
             if i == 0:
                 spice_list = [1]               # Minimum spice is 0.0
                 continue
-            r = self.relationship_lookup(self.ordering[i-1], self.ordering[i])
-            spice_list.append(spice_list[-1] * r.relation)
+
+            i_nearest = i-1
+            r = self.relationship_lookup(self.ordering[i_nearest], self.ordering[i])
+            while (r.relation is None) and (i_nearest > 0):
+                i_nearest -= 1
+                r = self.relationship_lookup(self.ordering[i_nearest], self.ordering[i])
+
+            spice_list.append(spice_list[i_nearest] * r.relation)
 
         # Converge the spice rating by comparing with charts that are "close".
         # Re-sort the ordering according to the new spice ratings each time.
@@ -811,6 +853,10 @@ class Tournament:
         for s in self.ordering:
             print(f"{np.log2(s.spice):5.3f}🌶 {str(s):>60s}", file=fp or sys.stdout)
 
+    def view_pvs_ranking(self, fp=None):
+        pvs = sorted([s for s in self.ordering], key=lambda s: s.value / s.spice, reverse=True)
+        for s in pvs:
+            print(f"{s.value / s.spice:5.0f} pts / 2^🌶    ({s.value:4.0f} max points, {np.log2(s.spice):5.3f}🌶) {str(s):>80s}", file=fp or sys.stdout)
 
     def calc_point_curve(self, v: np.ndarray) -> np.ndarray:
         if self.POINT_CURVE == 'itl2023':
@@ -888,8 +934,8 @@ class Tournament:
         # Missing %EX score that would bring this chart up to the player's scobility fit
         ex_target = np.clip((np.power(2, p_spices - pred_qual)) * (Tournament.PERFECT_OFFSET + 1), a_min=0, a_max=1)
         pt_access = np.round(values * self.calc_point_curve(100 - 100*ex_target) * 0.01) - points  # Additional point gain (not tournament RP!) from bringing this chart up
-        ex_rp_hit = 1 - 0.01*self.calc_point_curve_inv(100 * tourney_rp_cutoff / values)
         with np.errstate(divide='ignore', invalid='ignore'):
+            ex_rp_hit = 1 - 0.01*self.calc_point_curve_inv(100 * tourney_rp_cutoff / values)
             need_qual = p_spices - np.log2(Tournament.PERFECT_OFFSET + ex_rp_hit) + p_min
 
         # Draw a best-fit line to calculate the player's strength.
@@ -898,7 +944,7 @@ class Tournament:
         # by observing the slope of the best-fit line.
         p_played = ~np.isnan(p_scores)
 
-        if sum(p_played) < 5:       # TODO: parameterize this limit
+        if sum(p_played) < 2:       # TODO: parameterize this limit
             raise Exception(f'{player.name} (#{player.e_id}) hasn\'t played enough charts with a known spice rating yet')
                 
         stats = StringIO()
@@ -942,7 +988,7 @@ class Tournament:
         # catch-up points should be deducted before ranking its impact.
         p_valuable = [z for z in p_ranking if (z[2] + z[4] >= tourney_rp_cutoff) and (z[4] > 0)]
         p_valuable.sort(key=lambda z: z[4] + min(z[2]-tourney_rp_cutoff, 0), reverse=True)
-        n_rp_rec = int(np.sqrt(len(points_all)))
+        n_rp_rec = 1000 #int(np.power(len(points_all), 2/3))
         # If there aren't enough charts with catch-up points,
         # start recommending charts that are just above the scobility trend,
         # as well as what EX score would be required to gain RP.
@@ -988,7 +1034,7 @@ class Tournament:
 
         if dst_dir is not None:
             if use_player_name:
-                dst_log = os.path.join(dst_dir, f'{player.e_id}-{player.name}.txt')
+                dst_log = os.path.join(dst_dir, f'{player.e_id}-{slugify(player.name)}.txt')
             else:
                 dst_log = os.path.join(dst_dir, f'{player.e_id}.txt')
             with open(dst_log, 'w', encoding='utf-8') as fp:
@@ -1006,7 +1052,10 @@ class Tournament:
             if s.s_id in player.scores:
                 scores[i] = player.scores[s.s_id].value
                 counts[i] = player.scores[s.s_id].plays
-                dates[i] = (player.scores[s.s_id].last_played - dt.utcfromtimestamp(0)).total_seconds()
+                try:
+                    dates[i] = (player.scores[s.s_id].last_played - dt.utcfromtimestamp(0)).total_seconds()
+                except:
+                    dates[i] = 0
             if s.spice:
                 spices[i] = s.spice
 
@@ -1068,7 +1117,7 @@ class Tournament:
         plt.title(f'Scobility {_VERSION} plot for {player}\nRating: $\\bf{{{player.scobility:0.3f}}}$')
         if dst_dir is not None:
             if use_player_name:
-                plt.savefig(os.path.join(dst_dir, f'{player.e_id}-{player.name}.png'))
+                plt.savefig(os.path.join(dst_dir, f'{player.e_id}-{slugify(player.name)}.png'))
             else:
                 plt.savefig(os.path.join(dst_dir, f'{player.e_id}.png'))
         if visual:
@@ -1123,82 +1172,108 @@ def load_json_data(root='itl_data', jit=False):
     return tourney
 
 
-def process(src='itl2023'):
+def process(src='itl2023', force_recalculate_spice: bool = False):
+    src = src.lower()
+    scrape_designator = ''
+    tourney_fn = None
+
     print('========================================================================')
     print(f'=== Scobility {_VERSION}')
     print('========================================================================')
     print()
-    print('========================================================================')
-    print('=== Loading data...')
-    if src.lower() == 'itl2022':
+    if src == 'itl2022':
         # https://github.com/G-Wen/itl_history
         jit = False
-        tourney = load_json_data(root='itl_data', jit=jit)
-    elif src.lower() == 'itl2023':
+        root = 'itl_data'
+    elif src == 'itl2023':
         # Personally scraped
         jit = False
         latest_itl2023 = sorted([d for d in os.listdir('itl2023_data') if re.match('^\d+$', d)])[-1]
-        tourney = load_json_data(root=os.path.join('itl2023_data', latest_itl2023), jit=jit)
-    elif src.lower() == '3ic':
+        scrape_designator = '_' + latest_itl2023
+        root = os.path.join('itl2023_data', latest_itl2023)
+    elif src == '3ic':
         # Privately provided
         jit = True
-        tourney = load_json_data(root='3ic_data', jit=jit)
-    print('========================================================================')
-    print('=== Setting up relationships...')
-    tourney.setup_relationships()
-    print('========================================================================')
-    print('=== Calculating relationships...')
-    if jit:
-        tourney.calc_relationships_jit(src='3ic_data/song_scores', verbal=False)
+        root = '3ic_data'
+
+    tourney_list = sorted([d for d in os.listdir('.') if re.match(f'^scobility_{src}.*\.json$', d)])
+    tourney = Tournament()
+    if len(tourney_list) == 0 or force_recalculate_spice:
+        print('========================================================================')
+        print('=== Loading data...')
+        tourney = load_json_data(root=root, jit=jit)
+        print('========================================================================')
+        print('=== Setting up relationships...')
+        tourney.setup_relationships()
+        print('========================================================================')
+        print('=== Calculating relationships...')
+        if jit:
+            tourney.calc_relationships_jit(src='3ic_data/song_scores', verbal=False)
+        else:
+            tourney.calc_relationships(verbal=False)
+        print('========================================================================')
+        print('=== Setting up closest-neighbor initial order...')
+        tourney.order_songs_initial(verbal=False, visual=False)
+        print('========================================================================')
+        print('=== Bubbling out non-monotonicities...')
+        tourney.order_refine_monotonic(verbal=False, visual=False)
+        print('========================================================================')
+        print('=== Refining spice ranking using neighborhood influence...')
+        tourney.order_refine_by_spice(verbal=True, visual=False)
+        print('========================================================================')
+        print('=== Spice ranking calculation complete!...')
+        # itl.view_spice_ranking()
+        with open(f'{src}_data/spice_ranking{scrape_designator}.txt', 'w', encoding='utf-8') as fp:
+            tourney.view_spice_ranking(fp)
+
+        # Store (and re-load?)
+        tourney_fn = f'scobility_{src}{scrape_designator}.json'
+        with open(tourney_fn, 'w') as fp:
+            json.dump(tourney.dump(), fp, indent='\t')
+        print('========================================================================')
+        print(f'=== Saved tournament snapshot to {tourney_fn}')
     else:
-        tourney.calc_relationships(verbal=False)
-    print('========================================================================')
-    print('=== Setting up closest-neighbor initial order...')
-    tourney.order_songs_initial(verbal=False, visual=False)
-    print('========================================================================')
-    print('=== Bubbling out non-monotonicities...')
-    tourney.order_refine_monotonic(verbal=False, visual=False)
-    print('========================================================================')
-    print('=== Refining spice ranking using neighborhood influence...')
-    tourney.order_refine_by_spice(verbal=True, visual=False)
-    print('========================================================================')
-    print('=== Spice ranking calculation complete!...')
-    # itl.view_spice_ranking()
-    with open(f'{src}_data/spice_ranking.txt', 'w', encoding='utf-8') as fp:
-        tourney.view_spice_ranking(fp)
+        # Reload
+        tourney_fn = tourney_list[-1]
+        print('========================================================================')
+        print(f'=== Loading tournament snapshot from {tourney_fn}...')
+        with open(tourney_fn, 'r') as fp:
+            tourney = Tournament.load(json.load(fp))
 
-    # Store (and re-load?)
-    # with open('scobility_itl.json', 'w') as fp:
-    #     json.dump(itl.dump(), fp, indent='\t')
-    
-    # with open('scobility_itl.json', 'r') as fp:
-    #     itl2 = Tournament.load(json.load(fp))
-
+    with open(f'{src}_data/pvs_ranking{scrape_designator}.txt', 'w', encoding='utf-8') as fp:
+        tourney.view_pvs_ranking(fp)
     print('========================================================================')
     print('=== Performing scobility calculations...')
+    output_dir = os.path.join(f'{src}_data', scrape_designator[1:], 'scobility')
+    os.makedirs(output_dir, exist_ok=True)
     for p in tourney.players.values():
         try:
-            tourney.calc_player_scobility(p, dst_dir=f'{src}_data/scobility', verbal=False, visual=False, use_player_name=True)
-            tourney.calc_recommendations(p,  dst_dir=f'{src}_data/scobility', verbal=False, visual=False, use_player_name=True)
+            tourney.calc_player_scobility(p, dst_dir=output_dir, verbal=False, visual=False, use_player_name=True)
+            tourney.calc_recommendations(p,  dst_dir=output_dir, verbal=False, visual=False, use_player_name=True)
         except Exception as e:
             print(f'Scobility calculation failed for {p} (probably due to lack of sufficient score data)', file=sys.stderr)
-            print(e, file=sys.stderr)
+            tb.print_exc(file=sys.stderr)
     print('========================================================================')
     print('=== Ranking players by scobility...')
     # itl.view_scobility_ranking()
-    with open(f'{src}_data/scobility_ranking.txt', 'w', encoding='utf-8') as fp:
+    with open(os.path.join(f'{src}_data', f'scobility_ranking{scrape_designator}.txt'), 'w', encoding='utf-8') as fp:
         tourney.view_scobility_ranking(fp)
     print('========================================================================')
     print('=== Ranking players by tourney performance...')
     # itl.view_tourney_ranking()
-    with open(f'{src}_data/tourney_ranking.txt', 'w', encoding='utf-8') as fp:
+    with open(os.path.join(f'{src}_data', f'tourney_ranking{scrape_designator}.txt'), 'w', encoding='utf-8') as fp:
         tourney.view_tourney_ranking(fp)
     print('========================================================================')
     print('=== Done!')
+    
+    # Store (and re-load?)
+    tourney_fn = f'scobility_{src}{scrape_designator}.json'
+    with open(tourney_fn, 'w') as fp:
+        json.dump(tourney.dump(), fp, indent='\t')
 
     return tourney
 
 
 if __name__ == '__main__':
-    process(src='itl2023')
+    process(src='itl2022', force_recalculate_spice=False)
     
