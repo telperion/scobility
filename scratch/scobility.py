@@ -272,7 +272,7 @@ class Relationship:
     MAX_NEG_LIMIT = 0.3             # i.e., 700,000 min EX score
     MIN_NEG_LIMIT = 0.0002          # i.e., 999,800 max EX score (ONLY for initial score scaling!)
     WEIGHT_OFFSET = 0.5
-    MIN_COMMON_PLAYERS = 6
+    MIN_COMMON_PLAYERS = 2
     
     def __init__(self, x: Song, y: Song):
         self.x = x
@@ -401,7 +401,7 @@ class Relationship:
 @dataclass
 class Tournament:
     MONO_THRESHOLD = 0.999999                       # Monotonicity check
-    MIN_COMMON_PLAYERS = 20                         # For ordering purposes
+    MIN_COMMON_PLAYERS = 2                          # For ordering purposes
     ITERATIONS_MONOTONIC_SORT = 10                  # Bubble sort for correlation factor monotonicity
     ITERATIONS_SCOBILITY_SORT = 500                 # Refining the scobility values and post-sorting
     SCOBILITY_WINDOW_LOWER = 10                     # Incorporate this many lower scobility readings
@@ -523,7 +523,7 @@ class Tournament:
                     'e_id': s_data['entrantId'],
                     'plays': s_data.get('totalPasses', 1),
                     'last_played': s_dt,
-                    'clear': Clear(s_data['clearType']),
+                    'clear': Clear(s_data.get('clearType', 1)),
                     'value': 1 - s_data['ex'] * Score.SCORE_SCALAR
                 })
 
@@ -804,7 +804,11 @@ class Tournament:
                 i_nearest -= 1
                 r = self.relationship_lookup(self.ordering[i_nearest], self.ordering[i])
 
-            spice_list.append(spice_list[i_nearest] * r.relation)
+            if r.relation is None:
+                # No helpful relationships - just pretend the spice is identical to the last one.
+                spice_list.append(spice_list[-1])
+            else:
+                spice_list.append(spice_list[i_nearest] * r.relation)
 
         # Converge the spice rating by comparing with charts that are "close".
         # Re-sort the ordering according to the new spice ratings each time.
@@ -1172,7 +1176,7 @@ def load_json_data(root='itl_data', jit=False):
     return tourney
 
 
-def process(src='itl2023', force_recalculate_spice: bool = False):
+def process(src='itl2024', force_recalculate_spice: bool = False):
     src = src.lower()
     scrape_designator = ''
     tourney_fn = None
@@ -1191,6 +1195,12 @@ def process(src='itl2023', force_recalculate_spice: bool = False):
         latest_itl2023 = sorted([d for d in os.listdir('itl2023_data') if re.match('^\d+$', d)])[-1]
         scrape_designator = '_' + latest_itl2023
         root = os.path.join('itl2023_data', latest_itl2023)
+    elif src == 'itl2024':
+        # Personally scraped
+        jit = False
+        latest_itl2024 = sorted([d for d in os.listdir('itl2024_prep') if re.match('^\d+$', d)])[-1]
+        scrape_designator = '_' + latest_itl2024
+        root = os.path.join('itl2024_prep', latest_itl2024)
     elif src == '3ic':
         # Privately provided
         jit = True
@@ -1275,5 +1285,5 @@ def process(src='itl2023', force_recalculate_spice: bool = False):
 
 
 if __name__ == '__main__':
-    process(src='itl2022', force_recalculate_spice=False)
+    process(src='itl2024', force_recalculate_spice=True)
     

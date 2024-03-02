@@ -1,25 +1,341 @@
 import azure.functions as func
-import logging
 
-app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
+import os
+from datetime import datetime as dt, timezone as tz
+from typing import Union, Dict
 
-@app.route(route="scobility")
-def scobility(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info('Python HTTP trigger function processed a request.')
+from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, TypeAdapter
 
-    name = req.params.get('name')
-    if not name:
-        try:
-            req_body = req.get_json()
-        except ValueError:
-            pass
+from dotenv import load_dotenv
+load_dotenv()
+
+from sqlalchemy import create_engine
+from sqlalchemy import insert
+from sqlalchemy import select
+from sqlalchemy import bindparam
+from sqlalchemy import MetaData
+from sqlalchemy.engine import URL
+
+import numpy as np
+
+from db_types import Catalog, Chart, Player, Relationship, Score
+
+
+def dt2str(d: Dict) -> Dict:
+    r = {}
+    for k in d:
+        if isinstance(d[k], dt):
+            r[k] = d[k].isoformat()
         else:
-            name = req_body.get('name')
+            r[k] = d[k]
+    return r
 
-    if name:
-        return func.HttpResponse(f"Hello, {name}. This HTTP triggered function executed successfully.")
+def engine_construct():
+    url_construct = URL.create(
+        "mssql+pyodbc",
+        username=os.environ["SCOBILITY_UID"],
+        password=os.environ["SCOBILITY_PWD"],
+        host=os.environ["SCOBILITY_SERVER"],
+        database=os.environ["SCOBILITY_DATABASE"],
+        query={"driver": "ODBC Driver 18 for SQL Server"}
+    )
+
+    return create_engine(url_construct)
+
+_ENGINE = engine_construct()
+_MD = MetaData()
+_MD.reflect(bind=_ENGINE)
+
+def enumerate_catalogs():
+    catalogs = {}
+    try:
+        with _ENGINE.connect() as connection:
+            result = connection.execute(
+                select(_MD.tables['Catalog'])
+            )
+            rows = result.all()
+            for row in rows:
+                r = TypeAdapter(Catalog).validate_python(row._mapping)
+                catalogs[r.name] = dt2str(dict(r))
+            return catalogs
+    except Exception as e:
+        print(e)
+
+_CATALOGS = enumerate_catalogs()
+
+
+def lookup_catalog(catalog_name: str) -> Dict:
+    if catalog_name in _CATALOGS:
+        return {
+            'status': True,
+            'data': _CATALOGS[catalog_name],
+            'message': f"Found {catalog_name} in scobility catalogs"
+        }
     else:
-        return func.HttpResponse(
-             "This HTTP triggered function executed successfully. Pass a name in the query string or in the request body for a personalized response.",
-             status_code=200
-        )
+        return {
+            'status': False,
+            'message': f"Couldn't find {catalog_name} in scobility catalogs"
+        }
+
+def lookup_spice(catalog_name: str, chart_id: Union[int, None]) -> Dict:
+    filter_fields = ['chart_id', 'hash', 'spice', 'spice_calc_time']
+    try:
+        if catalog_name not in _CATALOGS:
+            return {
+                'status': False,
+                'message': f"Couldn't find {catalog_name} in scobility catalogs"
+            }
+        else:
+            catalog_id = _CATALOGS[catalog_name]['catalog_id']
+
+        with _ENGINE.connect() as connection:
+            if chart_id is None:
+                result = connection.execute(
+                    select(_MD.tables['Chart']).where(
+                        _MD.tables['Chart'].c.catalog_id == catalog_id
+                    )
+                )
+                rows = result.all()
+                charts = []
+                for row in rows:
+                    c = TypeAdapter(Chart).validate_python(row._mapping)
+                    cc = dt2str(dict(c))
+                    charts.append({k: cc[k] for k in cc if k in filter_fields})
+                return {
+                    'status': True,
+                    'data': charts,
+                    'message': f"Found {len(charts)} charts in scobility catalog {catalog_name}"
+                }
+            else:
+                if isinstance(chart_id, str):
+                    # chart hash lookup
+                    result = connection.execute(
+                        select(_MD.tables['Chart']).where(
+                            _MD.tables['Chart'].c.catalog_id == catalog_id,
+                            _MD.tables['Chart'].c.hash == chart_id
+                        )
+                    )
+                else:
+                    # chart ID lookup
+                    result = connection.execute(
+                        select(_MD.tables['Chart']).where(
+                            _MD.tables['Chart'].c.catalog_id == catalog_id,
+                            _MD.tables['Chart'].c.chart_id == chart_id
+                        )
+                    )
+                rows = result.all()
+                if len(rows) == 1:
+                    c = TypeAdapter(Chart).validate_python(rows[0]._mapping)
+                    cc = dt2str(dict(c))
+                    return {
+                        'status': True,
+                        'data': {k: cc[k] for k in cc if k in filter_fields},
+                        'message': f"Found chart {chart_id} in scobility catalog {catalog_name}"
+                    }
+                else:
+                    return {
+                        'status': False,
+                        'message': f"Couldn't find chart {chart_id} in scobility catalog {catalog_name}"
+                    }
+
+    except Exception as e:
+        print(e)
+        return {
+            'status': False,
+            'message': "Couldn't connect to DB"
+        }
+
+
+def get_cached_scobility(catalog_name: str, entrant_id: int) -> Dict:
+    filter_fields = ['entrant_id', 'scobility', 'timing_power', 'comfort_zone', 'scobility_calc_time']
+    try:
+        if catalog_name not in _CATALOGS:
+            return {
+                'status': False,
+                'message': f"Couldn't find {catalog_name} in scobility catalogs"
+            }
+        else:
+            catalog_id = _CATALOGS[catalog_name]['catalog_id']
+
+        with _ENGINE.connect() as connection:
+            result = connection.execute(
+                select(_MD.tables['Player']).where(
+                    _MD.tables['Player'].c.catalog_id == catalog_id,
+                    _MD.tables['Player'].c.entrant_id == entrant_id
+                )
+            )
+            rows = result.all()
+            if len(rows) == 1:
+                c = TypeAdapter(Player).validate_python(rows[0]._mapping)
+                cc = dt2str(dict(c))
+                return {
+                    'status': True,
+                    'data': {k: cc[k] for k in cc if k in filter_fields},
+                    'message': f"Found player #{entrant_id} in scobility catalog {catalog_name}"
+                }
+            else:
+                return {
+                    'status': False,
+                    'message': f"Couldn't find player #{entrant_id} in scobility catalog {catalog_name}"
+                }
+
+    except Exception as e:
+        print(e)
+        return {
+            'status': False,
+            'message': "Couldn't connect to DB"
+        }
+
+
+def calc_scobility(catalog_name: str, score_list: Dict) -> Dict:
+    # score_list = {chart_id: score_ex_unity}
+
+    scobility_result = {
+        'entrant_id': None,
+        'scobility': None,
+        'timing_power': None,
+        'comfort_zone': None,
+        'scobility_calc_time': dt.isoformat(dt.utcnow())
+    }
+    try:
+        if catalog_name not in _CATALOGS:
+            return {
+                'status': False,
+                'message': f"Couldn't find {catalog_name} in scobility catalogs"
+            }
+        else:
+            catalog_id = _CATALOGS[catalog_name]['catalog_id']
+
+        with _ENGINE.connect() as connection:
+            result = connection.execute(
+                select(_MD.tables['Chart']).where(
+                    _MD.tables['Chart'].c.catalog_id == catalog_id,
+                    _MD.tables['Chart'].c.chart_id in score_list.keys()
+                )
+            )
+            charts = [
+                TypeAdapter(Chart).validate_python(r._mapping)
+                for r in result.all()
+            ]
+            return {
+                'status': True,
+                'data': scobility_result,
+                'message': f"Calculated scobility catalog from {len(score_list)} scores"
+            }
+
+    except Exception as e:
+        print(e)
+        return {
+            'status': False,
+            'message': "Couldn't connect to DB"
+        }
+
+# http://blog.pamelafox.org/2022/11/fastapi-on-azure-functions-with-azure.html
+# if os.getenv("FUNCTIONS_WORKER_RUNTIME"):
+#     api = FastAPI(
+#         servers=[
+#             {"url": "/api",
+#             "description": "API"}
+#         ],
+#         root_path="/public",
+#         root_path_in_servers=False
+#     )
+# else:
+#     api = FastAPI()
+api = FastAPI(
+    root_path="/api"
+)
+
+
+
+@api.get("/")
+def root() -> JSONResponse:
+    s = "Scobility API! :chili_pepper:"
+    print(s)
+    return JSONResponse(content={'status': True, 'message': s})
+
+
+@api.get("/catalog/{catalog_name}")
+def get_catalog(catalog_name: str) -> JSONResponse:
+    print(f"Looking for {catalog_name} catalog...")
+
+    result = lookup_catalog(catalog_name)
+
+    return JSONResponse(content=result,
+        status_code=result.get('status') and 200 or 404)
+
+
+@api.get("/catalog/{catalog_name}/chart/{chart_q}")
+def get_catalog(catalog_name: str, chart_q: str) -> JSONResponse:
+    result = lookup_catalog(catalog_name)
+    if 'data' not in result:    
+        return {
+            'status': False,
+            'message': f"Couldn't find {catalog_name} in scobility catalogs"
+        }
+    
+    try:
+        chart_id = int(chart_q)
+        print(f"Looking for chart #{chart_id} in {catalog_name} catalog...")
+        result = lookup_spice(catalog_name, chart_id)
+
+        return JSONResponse(content=result,
+            status_code=result.get('status') and 200 or 404)
+    except ValueError:
+        if chart_q.lower() == "all":
+            print(f"Listing all charts in {catalog_name} catalog...")
+            result = lookup_spice(catalog_name, None)
+        else:
+            print(f"Looking for chart hash={chart_q} in {catalog_name} catalog...")
+            result = lookup_spice(catalog_name, chart_q)
+
+        return JSONResponse(content=result,
+            status_code=result.get('status') and 200 or 404)
+    except Exception as e:
+        print(e)
+        return {
+            'status': False,
+            'message': "Something unexpected happened"
+        }
+
+
+@api.get("/catalog/{catalog_name}/scobility/{player_q}")
+def get_catalog(catalog_name: str, player_q: str) -> JSONResponse:
+    result = lookup_catalog(catalog_name)
+    if 'data' not in result:    
+        return {
+            'status': False,
+            'message': f"Couldn't find {catalog_name} in scobility catalogs"
+        }
+    
+    try:
+        player_id = int(player_q)
+        print(f"Looking for player #{player_id} in {catalog_name} catalog...")
+        result = lookup_spice(catalog_name, player_id)
+
+        return JSONResponse(content=result,
+            status_code=result.get('status') and 200 or 404)
+    except ValueError:
+        if chart_q.lower() == "all":
+            print(f"Listing all charts in {catalog_name} catalog...")
+            result = lookup_spice(catalog_name, None)
+        else:
+            print(f"Looking for chart hash={chart_q} in {catalog_name} catalog...")
+            result = lookup_spice(catalog_name, chart_q)
+
+        return JSONResponse(content=result,
+            status_code=result.get('status') and 200 or 404)
+    except Exception as e:
+        print(e)
+        return {
+            'status': False,
+            'message': "Something unexpected happened"
+        }
+
+app = func.AsgiFunctionApp(
+    app=api,
+    http_auth_level=func.AuthLevel.ANONYMOUS
+)

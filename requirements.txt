@@ -3,3 +3,10 @@
 # Manually managing azure-functions-worker may cause unexpected issues
 
 azure-functions
+fastapi
+pydantic
+pyodbc
+SQLAlchemy>=1.4,<1.5
+uvicorn[standard]
+python-dotenv
+numpy
