@@ -22,6 +22,7 @@ from sqlalchemy.engine import URL
 import numpy as np
 
 from db_types import Catalog, Chart, Player, Relationship, Score
+import scobility_lite
 
 
 def dt2str(d: Dict) -> Dict:
@@ -149,7 +150,7 @@ def lookup_spice(catalog_name: str, chart_id: Union[int, None]) -> Dict:
         }
 
 
-def get_cached_scobility(catalog_name: str, entrant_id: int) -> Dict:
+def get_cached_scobility(catalog_name: str, entrant_id: Union[int, None]) -> Dict:
     filter_fields = ['entrant_id', 'scobility', 'timing_power', 'comfort_zone', 'scobility_calc_time']
     try:
         if catalog_name not in _CATALOGS:
@@ -161,26 +162,44 @@ def get_cached_scobility(catalog_name: str, entrant_id: int) -> Dict:
             catalog_id = _CATALOGS[catalog_name]['catalog_id']
 
         with _ENGINE.connect() as connection:
-            result = connection.execute(
-                select(_MD.tables['Player']).where(
-                    _MD.tables['Player'].c.catalog_id == catalog_id,
-                    _MD.tables['Player'].c.entrant_id == entrant_id
+            if entrant_id is None:
+                result = connection.execute(
+                    select(_MD.tables['Player']).where(
+                        _MD.tables['Player'].c.catalog_id == catalog_id
+                    )
                 )
-            )
-            rows = result.all()
-            if len(rows) == 1:
-                c = TypeAdapter(Player).validate_python(rows[0]._mapping)
-                cc = dt2str(dict(c))
+                rows = result.all()
+                players = []
+                for row in rows:
+                    p = TypeAdapter(Player).validate_python(row._mapping)
+                    pp = dt2str(dict(p))
+                    players.append({k: pp[k] for k in pp if k in filter_fields})
                 return {
                     'status': True,
-                    'data': {k: cc[k] for k in cc if k in filter_fields},
-                    'message': f"Found player #{entrant_id} in scobility catalog {catalog_name}"
+                    'data': players,
+                    'message': f"Found {len(players)} players in scobility catalog {catalog_name}"
                 }
             else:
-                return {
-                    'status': False,
-                    'message': f"Couldn't find player #{entrant_id} in scobility catalog {catalog_name}"
-                }
+                result = connection.execute(
+                    select(_MD.tables['Player']).where(
+                        _MD.tables['Player'].c.catalog_id == catalog_id,
+                        _MD.tables['Player'].c.entrant_id == entrant_id
+                    )
+                )
+                rows = result.all()
+                if len(rows) == 1:
+                    p = TypeAdapter(Player).validate_python(rows[0]._mapping)
+                    pp = dt2str(dict(p))
+                    return {
+                        'status': True,
+                        'data': {k: pp[k] for k in pp if k in filter_fields},
+                        'message': f"Found player #{entrant_id} in scobility catalog {catalog_name}"
+                    }
+                else:
+                    return {
+                        'status': False,
+                        'message': f"Couldn't find player #{entrant_id} in scobility catalog {catalog_name}"
+                    }
 
     except Exception as e:
         print(e)
@@ -190,15 +209,20 @@ def get_cached_scobility(catalog_name: str, entrant_id: int) -> Dict:
         }
 
 
-def calc_scobility(catalog_name: str, score_list: Dict) -> Dict:
-    # score_list = {chart_id: score_ex_unity}
+def calc_scobility(catalog_name: str, scores: Dict, rescale: Union[float, None] = None) -> Dict:
+    # scores = {chart_id: score_ex_unity}
+    # rescale = 10000 (for ITG EX)
+    #           1000000 (for SMX)
+    #           None (if already expressed as proportional diff from perfect)
 
     scobility_result = {
         'entrant_id': None,
         'scobility': None,
         'timing_power': None,
         'comfort_zone': None,
-        'scobility_calc_time': dt.isoformat(dt.utcnow())
+        'scobility_calc_time': dt.isoformat(dt.utcnow()),
+        'score_qualities': None,
+        'message': None
     }
     try:
         if catalog_name not in _CATALOGS:
@@ -213,17 +237,26 @@ def calc_scobility(catalog_name: str, score_list: Dict) -> Dict:
             result = connection.execute(
                 select(_MD.tables['Chart']).where(
                     _MD.tables['Chart'].c.catalog_id == catalog_id,
-                    _MD.tables['Chart'].c.chart_id in score_list.keys()
+                    # _MD.tables['Chart'].c.chart_id in scores.keys()
                 )
             )
             charts = [
                 TypeAdapter(Chart).validate_python(r._mapping)
                 for r in result.all()
             ]
+            scores_rescale = scores
+            if rescale is not None:
+                scores_rescale = {
+                    int(k): 1 - v / rescale for k, v in scores.items()
+                }
+            scobility_result = scobility_lite.calc_player_scobility(
+                scores_rescale,
+                {c.chart_id: c.spice for c in charts}
+            )
             return {
                 'status': True,
                 'data': scobility_result,
-                'message': f"Calculated scobility catalog from {len(score_list)} scores"
+                'message': scobility_result.get('message',  f"Calculated scobility catalog from {len(scores)} scores")
             }
 
     except Exception as e:
@@ -269,7 +302,7 @@ def get_catalog(catalog_name: str) -> JSONResponse:
 
 
 @api.get("/catalog/{catalog_name}/chart/{chart_q}")
-def get_catalog(catalog_name: str, chart_q: str) -> JSONResponse:
+def get_chart(catalog_name: str, chart_q: str) -> JSONResponse:
     result = lookup_catalog(catalog_name)
     if 'data' not in result:    
         return {
@@ -303,7 +336,7 @@ def get_catalog(catalog_name: str, chart_q: str) -> JSONResponse:
 
 
 @api.get("/catalog/{catalog_name}/scobility/{player_q}")
-def get_catalog(catalog_name: str, player_q: str) -> JSONResponse:
+def get_scobility_cached(catalog_name: str, player_q: str) -> JSONResponse:
     result = lookup_catalog(catalog_name)
     if 'data' not in result:    
         return {
@@ -314,18 +347,38 @@ def get_catalog(catalog_name: str, player_q: str) -> JSONResponse:
     try:
         player_id = int(player_q)
         print(f"Looking for player #{player_id} in {catalog_name} catalog...")
-        result = lookup_spice(catalog_name, player_id)
+        result = get_cached_scobility(catalog_name, player_id)
 
         return JSONResponse(content=result,
             status_code=result.get('status') and 200 or 404)
     except ValueError:
-        if chart_q.lower() == "all":
-            print(f"Listing all charts in {catalog_name} catalog...")
-            result = lookup_spice(catalog_name, None)
+        if player_q.lower() == "all":
+            print(f"Listing scobility for all players in {catalog_name} catalog...")
+            result = get_cached_scobility(catalog_name, None)
+            return JSONResponse(content=result,
+                status_code=result.get('status') and 200 or 404)
         else:
-            print(f"Looking for chart hash={chart_q} in {catalog_name} catalog...")
-            result = lookup_spice(catalog_name, chart_q)
+            return {
+                'status': False,
+                'message': "Something unexpected happened"
+            }
+    except Exception as e:
+        print(e)
+        return {
+            'status': False,
+            'message': "Something unexpected happened"
+        }
+    
 
+class ScobilityRequest(BaseModel):
+    scores: Dict
+    rescale: Union[float, None] = None
+
+@api.post("/catalog/{catalog_name}/scobility")
+def get_scobility(catalog_name: str, reqs: ScobilityRequest) -> JSONResponse:
+    try:
+        print(f"Calculating scobility for {len(reqs.scores)} scores provided in {catalog_name} catalog...")
+        result = calc_scobility(catalog_name, reqs.scores, reqs.rescale)
         return JSONResponse(content=result,
             status_code=result.get('status') and 200 or 404)
     except Exception as e:
@@ -334,6 +387,7 @@ def get_catalog(catalog_name: str, player_q: str) -> JSONResponse:
             'status': False,
             'message': "Something unexpected happened"
         }
+
 
 app = func.AsgiFunctionApp(
     app=api,
