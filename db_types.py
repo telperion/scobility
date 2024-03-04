@@ -9,6 +9,12 @@ class Catalog(BaseModel):
     name: str
     active: bool
     last_update: Union[dt, None]
+    perfect_offset: Union[float, None]
+    # perfect_offset = internal scobility parameter to prevent singularity at perfect scores
+    perfect_score: Union[float, None]
+    # perfect_score = 10000 (for ITG EX)
+    #                 1000000 (for SMX)
+    #                 None (if already expressed as proportional diff from perfect)
 
 
 class Chart(BaseModel):

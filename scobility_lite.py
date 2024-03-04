@@ -7,22 +7,24 @@ from pydantic import BaseModel, TypeAdapter
 
 from db_types import Catalog, Chart, Player, Relationship, Score
 
-_PERFECT_OFFSET = 0.003
 _MIN_CHARTS_SCOBILITY_CALC = 5
 _RANKING_CHART_COUNT = 75
 
-def calc_score_quality(scores: np.ndarray, spices: np.ndarray):
+def calc_score_quality(catalog: Catalog, scores: np.ndarray, spices: np.ndarray):
+    scores_rescaled = scores
+    if catalog.perfect_score is not None:
+        scores_rescaled = 1 - scores/catalog.perfect_score
     # The lowest possible score (0%) on the chart with
     # the lowest spice level will define the (0, 0) point.
-    p_min = np.log2(_PERFECT_OFFSET + 1)
-    p_max = np.log2(_PERFECT_OFFSET)
+    p_min = np.log2(catalog.perfect_offset + 1)
+    p_max = np.log2(catalog.perfect_offset)
     p_spices = np.log2(spices)
-    p_scores = np.log2(_PERFECT_OFFSET + scores) - p_min
+    p_scores = np.log2(catalog.perfect_offset + scores_rescaled) - p_min
 
     return (p_spices - p_scores)
 
 
-def calc_player_scobility(scores_dict: Dict, spices_dict: Dict):
+def calc_player_scobility(catalog: Catalog, scores_dict: Dict, spices_dict: Dict):
     scobility_result = {
         'entrant_id': None,
         'scobility': None,
@@ -44,7 +46,7 @@ def calc_player_scobility(scores_dict: Dict, spices_dict: Dict):
     scores = np.array([scores_dict[k] for k in factor_charts])
     spices = np.array([spices_dict[k] for k in factor_charts])
 
-    p_quality = calc_score_quality(scores, spices)
+    p_quality = calc_score_quality(catalog, scores, spices)
 
     # Draw a best-fit line to calculate the player's strength.
     # Mostly used to determine the "comfort zone", i.e.
@@ -72,31 +74,37 @@ def calc_player_scobility(scores_dict: Dict, spices_dict: Dict):
     return scobility_result
 
 
-def calc_target_score(timing_power: float, comfort_zone: float, spices: np.ndarray):
+def calc_target_score(catalog: Catalog, player: Player, spices: np.ndarray) -> Union[np.ndarray, None]:
+    if (player.timing_power is None) or (player.comfort_zone is None):
+        return None
+    
     # The lowest possible score (0%) on the chart with
     # the lowest spice level will define the (0, 0) point.
-    p_min = np.log2(_PERFECT_OFFSET + 1)
-    p_max = np.log2(_PERFECT_OFFSET)
+    p_min = np.log2(catalog.perfect_offset + 1)
+    p_max = np.log2(catalog.perfect_offset)
     p_spices = np.log2(spices)
     #p_scores = np.log2(_PERFECT_OFFSET + scores) - p_min
 
     # Score quality that would bring this chart up to the player's scobility fit
-    predicted_quality = timing_power + p_spices * comfort_zone
+    predicted_quality = player.timing_power + p_spices * player.comfort_zone
 
     # Missing %EX score that would bring this chart up to the player's scobility fit
-    ex_target = np.clip((np.power(2, p_spices - predicted_quality)) * (_PERFECT_OFFSET + 1), a_min=0, a_max=1)
+    ex_target = np.clip((np.power(2, p_spices - predicted_quality)) * (catalog.perfect_offset + 1), a_min=0, a_max=1)
 
-    return ex_target
+    if catalog.perfect_score is not None:
+        return catalog.perfect_score * (1 - ex_target)
+    else:
+        return ex_target
 
 
-def calc_point_curve(v_raw: np.ndarray, catalog: str = 'ITL2023') -> np.ndarray:
+def calc_point_curve(catalog: Catalog, v_raw: np.ndarray) -> np.ndarray:
     v = 100 - 100*v_raw
 
-    if catalog == 'ITL2023':
+    if catalog.name == 'ITL2023':
         log_base = 1.1032889141348
         pow_base = 61
         inflect = 50
-    elif catalog == 'ITL2022':
+    elif catalog.name == 'ITL2022':
         log_base = 1.0638215
         pow_base = 31
         inflect = 75
@@ -111,12 +119,12 @@ def calc_point_curve(v_raw: np.ndarray, catalog: str = 'ITL2023') -> np.ndarray:
         np.power(pow_base, (v_hi-inflect)/(100-inflect)) - 1
 
 
-def calc_point_curve_inv(p: np.ndarray, catalog: str = 'ITL2023') -> np.ndarray:
-    if catalog == 'ITL2023':
+def calc_point_curve_inv(catalog: Catalog, p: np.ndarray) -> np.ndarray:
+    if catalog.name == 'ITL2023':
         log_base = 1.1032889141348
         pow_base = 61
         inflect = 50
-    elif catalog == 'ITL2022':
+    elif catalog.name == 'ITL2022':
         log_base = 1.0638215
         pow_base = 31
         inflect = 75
