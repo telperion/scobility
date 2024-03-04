@@ -43,6 +43,8 @@ api = FastAPI(
 
 
 ## Helper functions
+_TOO_MANY_THINGS = 69420
+
 _HASH_LEN = 16
 def cid(q: Union[int, str]) -> Union[int, str]:
     if isinstance(q, str) and len(q) == _HASH_LEN:
@@ -94,6 +96,7 @@ _MD.reflect(bind=_ENGINE)
 _CATALOGS = {}
 _SPICES = {}
 _PLAYERS = {}
+_SCORES = {}
 
 ## Database queries
 # The catalog listing doesn't change often.
@@ -153,7 +156,41 @@ def _cache_players(catalog_id: int) -> bool:
                 players = []
                 for row in rows:
                     players.append(TypeAdapter(Player).validate_python(row._mapping))
-            _PLAYERS[catalog_id] = players
+            _PLAYERS[catalog_id] = {p.entrant_id: p for p in players}
+            return True
+        except Exception as e:
+            logging.error(e)
+            return False
+    else:
+        return True
+
+# I don't want to also have to cache scores.
+def _cache_scores(catalog_id: int, entrant_id: int) -> bool:
+    if catalog_id not in _SCORES:
+        _SCORES[catalog_id] = {}
+
+    _cache_players(catalog_id)
+    if entrant_id not in _PLAYERS[catalog_id]:
+        logging.error(f"Couldn't find player #{entrant_id} in catalog #{catalog_id}")
+        return False
+    
+    if entrant_id not in _SCORES[catalog_id]:
+        try:
+            player = _PLAYERS[catalog_id][entrant_id]
+            performance_id = player.performance_id
+            # Need to query database and download/cache the scores
+            with _ENGINE.connect() as connection:
+                result = connection.execute(
+                    select(_MD.tables['Score']).where(
+                        _MD.tables['Score'].c.catalog_id == catalog_id,
+                        _MD.tables['Score'].c.performance_id == performance_id
+                    )
+                )
+                rows = result.all()
+                scores = []
+                for row in rows:
+                    scores.append(TypeAdapter(Score).validate_python(row._mapping))
+            _SCORES[catalog_id][entrant_id] = scores
             return True
         except Exception as e:
             logging.error(e)
@@ -200,7 +237,7 @@ def _lookup_spice(catalog_name: str, chart_id: Union[int, str]) -> Dict:
             }
 
         cx = cid(chart_id)
-        if isinstance(chart_id, str):
+        if isinstance(cx, str):
             # chart hash lookup
             chart_filter = [c for c in _SPICES[catalog_id] if c.hash == cx]
         else:
@@ -286,10 +323,8 @@ def _lookup_player(catalog_name: str, entrant_id: int) -> Dict:
             }
 
         # entrant ID lookup
-        player_filter = [p for p in _PLAYERS[catalog_id] if p.entrant_id == entrant_id]
-            
-        if len(player_filter) == 1:
-            player_selected = dt2str(dict(player_filter[0]))
+        if entrant_id in _PLAYERS[catalog_id]:
+            player_selected = dt2str(dict(_PLAYERS[catalog_id][entrant_id]))
             return {
                 'status': True,
                 'data': {k: player_selected[k] for k in player_selected if k in filter_fields},
@@ -326,7 +361,7 @@ def _list_all_players(catalog_name: str) -> Dict:
                 'message': f"Couldn't get player data for scobility catalog {catalog_name}"
             }
             
-        players = {p.entrant_id: dt2str(dict(p)) for p in _PLAYERS[catalog_id]}
+        players = {k: dt2str(dict(p)) for k, p in _PLAYERS[catalog_id].items()}
         players_filtered = {k:
                 {f: p[f] for f in p if f in filter_fields}
             for k, p in players.items()}
@@ -335,6 +370,165 @@ def _list_all_players(catalog_name: str) -> Dict:
             'status': True,
             'data': players_filtered,
             'message': f"Listed all players in scobility catalog {catalog_name}"
+        }
+
+    except Exception as e:
+        print(e)
+        return {
+            'status': False,
+            'message': "Couldn't connect to DB"
+        }
+
+
+def _lookup_score(catalog_name: str, entrant_id: int, chart_id: Union[int, str]) -> Dict:
+    filter_fields = ['score_id', 'entrant_id', 'chart_id', 'hash', 'score', 'plays', 'last_played']
+    try:
+        if catalog_name not in _CATALOGS:
+            return {
+                'status': False,
+                'message': f"Couldn't find {catalog_name} in scobility catalogs"
+            }
+        else:
+            catalog_id = _CATALOGS[catalog_name]['catalog_id']
+
+        # player grab
+        if not _cache_players(catalog_id):
+            return {
+                'status': False,
+                'message': f"Couldn't get player data for scobility catalog {catalog_name}"
+            }
+
+        # player ID lookup
+        if entrant_id not in _PLAYERS[catalog_id]:
+            return {
+                'status': False,
+                'message': f"Couldn't find player {entrant_id} in scobility catalog {catalog_name}"
+            }
+        
+        # chart grab
+        if not _cache_spice(catalog_id):
+            return {
+                'status': False,
+                'message': f"Couldn't get spice data for scobility catalog {catalog_name}"
+            }
+        
+        # chart lookup
+        cx = cid(chart_id)
+        if isinstance(cx, str):
+            # chart hash lookup
+            chart_filter = [c for c in _SPICES[catalog_id] if c.hash == cx]
+        else:
+            # chart ID lookup
+            chart_filter = [c for c in _SPICES[catalog_id] if c.chart_id == cx]
+        if len(chart_filter) != 1:
+            return {
+                'status': False,
+                'message': f"Couldn't find chart {chart_id} in scobility catalog {catalog_name}"
+            }
+        chart_selected = chart_filter[0]
+        global_chart_id = chart_selected.global_chart_id
+
+        # score grab
+        if not _cache_scores(catalog_id, entrant_id):
+            return {
+                'status': False,
+                'message': f"Couldn't get score data for player #{entrant_id} in scobility catalog {catalog_name}"
+            }
+        
+        # score ID lookup
+        score_filter = [s for s in _SCORES[catalog_id][entrant_id] if s.global_chart_id == global_chart_id]
+        if len(score_filter) != 1:
+            return {
+                'status': True,
+                'data': {
+                    'score_id': -1,
+                    'entrant_id': entrant_id,
+                    'chart_id': chart_selected.chart_id,
+                    'hash': chart_selected.hash,
+                    'score': 0,
+                    'plays': 0,
+                    'last_played': dt.isoformat(dt.utcnow())
+                },
+                'message': f"Player {entrant_id} does not have a score on chart {chart_id} in scobility catalog {catalog_name}."
+            }
+        else:
+            score_selected = dt2str(dict(score_filter[0]))
+            score_data = {k: score_selected[k] for k in score_selected if k in filter_fields}
+            score_data['entrant_id'] = entrant_id
+            score_data['chart_id'] = chart_selected.chart_id
+            score_data['hash'] = chart_selected.hash
+
+            return {
+                'status': True,
+                'data': score_data,
+                'message': f"Found score {score_data['score']} ({score_data['plays']} plays) for player {entrant_id} in scobility catalog {catalog_name}"
+            }
+
+    except Exception as e:
+        print(e)
+        return {
+            'status': False,
+            'message': "Couldn't connect to DB"
+        }
+
+
+def _list_all_scores(catalog_name: str, entrant_id: int) -> Dict:
+    filter_fields = ['score_id', 'entrant_id', 'chart_id', 'hash', 'score', 'plays', 'last_played']
+    try:
+        if catalog_name not in _CATALOGS:
+            return {
+                'status': False,
+                'message': f"Couldn't find {catalog_name} in scobility catalogs"
+            }
+        else:
+            catalog_id = _CATALOGS[catalog_name]['catalog_id']
+
+        # player grab
+        if not _cache_players(catalog_id):
+            return {
+                'status': False,
+                'message': f"Couldn't get player data for scobility catalog {catalog_name}"
+            }
+
+        # player ID lookup
+        if entrant_id not in _PLAYERS[catalog_id]:
+            return {
+                'status': False,
+                'message': f"Couldn't find player {entrant_id} in scobility catalog {catalog_name}"
+            }
+        
+        # chart grab
+        if not _cache_spice(catalog_id):
+            return {
+                'status': False,
+                'message': f"Couldn't get spice data for scobility catalog {catalog_name}"
+            }
+        
+        global_chart_id_list = {c.global_chart_id: c for c in _SPICES[catalog_id]}
+
+        # score grab
+        if not _cache_scores(catalog_id, entrant_id):
+            return {
+                'status': False,
+                'message': f"Couldn't get score data for player #{entrant_id} in scobility catalog {catalog_name}"
+            }
+        
+        # score ID lookup
+        score_filter = [s for s in _SCORES[catalog_id][entrant_id] if s.global_chart_id in global_chart_id_list]
+
+        scores = {}
+        for s in score_filter:
+            score_selected = dt2str(dict(s))
+            score_data = {k: score_selected[k] for k in score_selected if k in filter_fields}
+            score_data['entrant_id'] = entrant_id
+            score_data['chart_id'] = global_chart_id_list[s.global_chart_id].chart_id
+            score_data['hash'] = global_chart_id_list[s.global_chart_id].hash
+            scores[score_data['hash']] = score_data
+
+        return {
+            'status': True,
+            'data': scores,
+            'message': f"Found {len(scores)} scores for player {entrant_id} in scobility catalog {catalog_name}"
         }
 
     except Exception as e:
@@ -433,18 +627,25 @@ def derive_target_score(catalog_name: str, entrant_info: Union[int, Dict], chart
             'message': "Couldn't derive target score: " + result_spices['message']
         }
     
+    if len(spices) * len(players) > _TOO_MANY_THINGS:
+        return {
+            'status': False,
+            'message': f"Exceeded request limit (requested {len(players)} targets on {len(spices)} charts, limit is {_TOO_MANY_THINGS})"
+        }
+    
     catalog = TypeAdapter(Catalog).validate_python(_CATALOGS[catalog_name])
     
-    chart_id_list = list(spices.keys())
-    spices_flat = list(spices.values())
     target_scores = {}
-    for p in players:
-        player = TypeAdapter(Player).validate_python(p, strict=False)
-        targets = scobility_lite.calc_target_score(catalog, player, spices_flat)
-        if targets is None:
-            target_scores[p['entrant_id']] = None
-        else:
-            target_scores[p['entrant_id']] = {c: t for c, t in zip(chart_id_list, targets)}
+    for p in players.values():
+        player = Player(**p,
+            performance_id=-1,
+            catalog_id=-1,
+            groovestats_id=-1,
+            boogiestats_id=-1,
+            name=""
+            )
+        targets = scobility_lite.calc_target_score(catalog, player, spices)
+        target_scores[p['entrant_id']] = targets
     
     return {
         'status': True,
@@ -582,7 +783,7 @@ def get_scobility_arbitrary(catalog_name: str, reqs: ScobilityRequest) -> JSONRe
 
 # Calculate target score for a particular player,
 # on a chart with a particular chart ID or hash - or for all charts
-@api.get("/catalog/{catalog_name}/chart/{chart_q}/target/{entrant_id}")
+@api.get("/catalog/{catalog_name}/target/{entrant_id}/chart/{chart_q}")
 def get_target_score(catalog_name: str, entrant_id: int, chart_q: str) -> JSONResponse:
     result = _lookup_catalog(catalog_name)
     if 'data' not in result:    
@@ -604,6 +805,78 @@ def get_target_score(catalog_name: str, entrant_id: int, chart_q: str) -> JSONRe
             'message': "Something unexpected happened"
         }
 
+
+# Calculate target scores for a particular player on all charts
+@api.get("/catalog/{catalog_name}/target/{entrant_id}")
+def get_all_targets(catalog_name: str, entrant_id: int) -> JSONResponse:
+    result = _lookup_catalog(catalog_name)
+    if 'data' not in result:    
+        return {
+            'status': False,
+            'message': f"Couldn't find {catalog_name} in scobility catalogs"
+        }
+    
+    try:
+        print(f"Targeting scores for player #{entrant_id} on all charts in {catalog_name} catalog...")
+        result = derive_target_score(catalog_name, entrant_id, 'all')
+
+        return JSONResponse(content=result,
+            status_code=result.get('status') and 200 or 404)
+    except Exception as e:
+        print(e)
+        return {
+            'status': False,
+            'message': "Something unexpected happened"
+        }
+
+
+# Retrieve a player's score for a particular chart ID or hash
+@api.get("/catalog/{catalog_name}/score/{entrant_id}/chart/{chart_q}")
+def get_score(catalog_name: str, entrant_id: int, chart_q: str) -> JSONResponse:
+    result = _lookup_catalog(catalog_name)
+    if 'data' not in result:    
+        return {
+            'status': False,
+            'message': f"Couldn't find {catalog_name} in scobility catalogs"
+        }
+    
+    try:
+        print(f"Looking for player #{entrant_id}'s score on chart {chart_q} in {catalog_name} catalog...")
+        result = _lookup_score(catalog_name, entrant_id, chart_q)
+            
+        return JSONResponse(content=result,
+            status_code=result.get('status') and 200 or 404)
+    except Exception as e:
+        print(e)
+        return {
+            'status': False,
+            'message': "Something unexpected happened"
+        }
+
+
+# Retrieve a player's score for all charts in the catalog
+@api.get("/catalog/{catalog_name}/score/{entrant_id}")
+def get_all_scores(catalog_name: str, entrant_id: int) -> JSONResponse:
+    result = _lookup_catalog(catalog_name)
+    if 'data' not in result:    
+        return {
+            'status': False,
+            'message': f"Couldn't find {catalog_name} in scobility catalogs"
+        }
+    
+    try:
+        print(f"Looking for player #{entrant_id}'s scores in {catalog_name} catalog...")
+        result = _list_all_scores(catalog_name, entrant_id)
+            
+        return JSONResponse(content=result,
+            status_code=result.get('status') and 200 or 404)
+    except Exception as e:
+        print(e)
+        return {
+            'status': False,
+            'message': "Something unexpected happened"
+        }
+    
 
 app = func.AsgiFunctionApp(
     app=api,

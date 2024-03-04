@@ -43,8 +43,10 @@ def calc_player_scobility(catalog: Catalog, scores_dict: Dict, spices_dict: Dict
         scobility_result['message'] = f"Not enough scores on spiced charts to calculate scobility (needed {_MIN_CHARTS_SCOBILITY_CALC}, got {len(factor_charts)})"
         return scobility_result
     
-    scores = np.array([scores_dict[k] for k in factor_charts])
-    spices = np.array([spices_dict[k] for k in factor_charts])
+    # Suppress charts that don't have spice ratings.
+    indices = [k for k in factor_charts if spices_dict[k]['spice'] is not None]
+    scores = np.array([scores_dict[k] for k in indices])
+    spices = np.array([spices_dict[k] for k in indices])
 
     p_quality = calc_score_quality(catalog, scores, spices)
 
@@ -69,15 +71,19 @@ def calc_player_scobility(catalog: Catalog, scores_dict: Dict, spices_dict: Dict
     scobility_result['timing_power'] = coefs[0]
     scobility_result['comfort_zone'] = coefs[1]
     scobility_result['score_qualities'] = {k: v for k, v in zip(factor_charts, p_quality)}
-    scobility_result['message'] = f"Calculated scobility from scores on {len(scores_dict)} & {len(spices_dict)} = {len(factor_charts)} spiced charts"
+    scobility_result['message'] = f"Calculated scobility from scores on {len(scores_dict)} & {len(spices_dict)} = {len(indices)} spiced charts"
 
     return scobility_result
 
 
-def calc_target_score(catalog: Catalog, player: Player, spices: np.ndarray) -> Union[np.ndarray, None]:
+def calc_target_score(catalog: Catalog, player: Player, spices_dict: Dict) -> Union[np.ndarray, None]:
     if (player.timing_power is None) or (player.comfort_zone is None):
         return None
     
+    # Suppress charts that don't have spice ratings.
+    indices = [k for k in spices_dict if spices_dict[k]['spice'] is not None]
+    spices = np.array([spices_dict[k]['spice'] for k in indices])
+
     # The lowest possible score (0%) on the chart with
     # the lowest spice level will define the (0, 0) point.
     p_min = np.log2(catalog.perfect_offset + 1)
@@ -92,9 +98,15 @@ def calc_target_score(catalog: Catalog, player: Player, spices: np.ndarray) -> U
     ex_target = np.clip((np.power(2, p_spices - predicted_quality)) * (catalog.perfect_offset + 1), a_min=0, a_max=1)
 
     if catalog.perfect_score is not None:
-        return catalog.perfect_score * (1 - ex_target)
+        ex_target_rescale = catalog.perfect_score * (1 - ex_target)
     else:
-        return ex_target
+        ex_target_rescale = ex_target
+    
+    # Elide charts that didn't have spice ratings.
+    result = {k: None for k in spices_dict}
+    for i, k in enumerate(indices):
+        result[k] = ex_target_rescale[i]
+    return result
 
 
 def calc_point_curve(catalog: Catalog, v_raw: np.ndarray) -> np.ndarray:
