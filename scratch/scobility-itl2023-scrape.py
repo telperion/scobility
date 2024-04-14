@@ -4,11 +4,13 @@ import os
 import json
 from datetime import datetime as dt
 
+tourney = 'itl2024'
+
 def timestamp():
     return dt.utcnow().strftime('%Y%m%d-%H%M%S-%f')[:-3]
 
 def setup_scrape() -> str:
-    path_dst = os.path.join('itl2023_data', dt.utcnow().strftime('%Y%m%d'))
+    path_dst = os.path.join(f'{tourney}_data', dt.utcnow().strftime('%Y%m%d'))
     os.makedirs(path_dst, exist_ok=True)
 
     # Set up logging
@@ -36,7 +38,7 @@ def scrape_charts(path_dst: str):
     strikes = []
     for i in range(10000):
         try:
-            r = requests.get(f'https://itl2023.groovestats.com/api/chart/{i}')
+            r = requests.get(f'https://{tourney}.groovestats.com/api/chart/{i}')
             j = r.json()
         except Exception as e:
             j = {'success': False, 'message': str(e)}
@@ -65,7 +67,7 @@ def scrape_entrants(path_dst: str):
     strikes = []
     for i in range(10000):
         try:
-            r = requests.get(f'https://itl2023.groovestats.com/api/entrant/{i}')
+            r = requests.get(f'https://{tourney}.groovestats.com/api/entrant/{i}')
             j = r.json()
         except Exception as e:
             j = {'success': False, 'message': str(e)}
@@ -107,7 +109,7 @@ def scrape_scores(path_dst: str):
         for retries in range(5):
             try:
                 r = requests.post(
-                    f'https://itl2023.groovestats.com/api/score/chartTopScores',
+                    f'https://{tourney}.groovestats.com/api/score/chartTopScores',
                     data={'chartHash': c['hash']}
                 )
                 if r.status_code > 400:

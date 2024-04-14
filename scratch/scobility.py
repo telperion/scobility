@@ -132,6 +132,7 @@ class Song:
     subtitle: str = ''
     artist: str = ''
     meter: float = 0
+    style: str = 'Single'
     slot: str = 'Challenge'
     value: float = 0                                # if the tourney specifies varying point values for charts
     scores: dict = field(default_factory=dict)      # e_id: Score
@@ -157,7 +158,7 @@ class Song:
 
             self.meter = data['song_meter']
             self.slot = data['song_difficulty']
-            self.playstyle = 1      # SP only
+            self.style = 'Single'      # SP only
         except:
             self.s_id = data['id']
             self.hash = data['hash']
@@ -174,7 +175,7 @@ class Song:
 
             self.meter = data['meter']
             self.slot = data['difficulty']
-            self.playstyle = data['playstyle']
+            self.style = ['Single', 'Double'][data['playstyle'] - 1]
 
         self.scores = {}
         self.spice = None
@@ -187,6 +188,7 @@ class Song:
             'subtitle': self.subtitle,
             'artist': self.artist,
             'meter': self.meter,
+            'style': self.style,
             'slot': self.slot,
             'value': self.value,
             'spice': self.spice
@@ -195,12 +197,12 @@ class Song:
     @classmethod
     def load(cls, data):
         obj = cls()
-        for fn in ['s_id', 'hash', 'title', 'subtitle', 'artist', 'meter', 'slot', 'value', 'spice']:
+        for fn in ['s_id', 'hash', 'title', 'subtitle', 'artist', 'meter', 'style', 'slot', 'value', 'spice']:
             setattr(obj, fn, data[fn])
         return obj
 
     def __str__(self):
-        return f"#{self.s_id} {self.full_title} ({self.slot} {self.meter}) ({self.value} max pts.)"
+        return f"#{self.s_id} {self.full_title} ({self.style} {self.slot} {self.meter}) ({self.value} max pts.)"
 
     @property
     def full_title(self):
@@ -211,7 +213,7 @@ class Song:
 
     @property
     def name(self):
-        return f"#{self.s_id} {self.full_title} ({self.slot} {self.meter})"
+        return f"#{self.s_id} {self.full_title} ({self.style} {self.slot} {self.meter})"
 
 
 @dataclass
@@ -272,7 +274,7 @@ class Relationship:
     MAX_NEG_LIMIT = 0.3             # i.e., 700,000 min EX score
     MIN_NEG_LIMIT = 0.0002          # i.e., 999,800 max EX score (ONLY for initial score scaling!)
     WEIGHT_OFFSET = 0.5
-    MIN_COMMON_PLAYERS = 2
+    MIN_COMMON_PLAYERS = 6
     
     def __init__(self, x: Song, y: Song):
         self.x = x
@@ -401,7 +403,7 @@ class Relationship:
 @dataclass
 class Tournament:
     MONO_THRESHOLD = 0.999999                       # Monotonicity check
-    MIN_COMMON_PLAYERS = 2                          # For ordering purposes
+    MIN_COMMON_PLAYERS = 6                          # For ordering purposes
     ITERATIONS_MONOTONIC_SORT = 10                  # Bubble sort for correlation factor monotonicity
     ITERATIONS_SCOBILITY_SORT = 500                 # Refining the scobility values and post-sorting
     SCOBILITY_WINDOW_LOWER = 10                     # Incorporate this many lower scobility readings
@@ -409,14 +411,14 @@ class Tournament:
     PERFECT_OFFSET = 0.003                          # Push scores away from logarithmic asymptote
     MAX_TOURNEY_POWER = 100                         # idk, I need a value
     RANKING_CHART_COUNT = 75                        # Only the top N of charts are considered for tourney ranking points
-    POINT_CURVE = 'itl2023'                         # Function that converts %EX to % of points earned
+    POINT_CURVE = 'itl2024'                         # Function that converts %EX to % of points earned
     MAX_HEADTAIL_QUALITY = 5                        # Maximum number of highest/lowest score quality callouts (N highest & N lowest)
     MAX_RP_RECOMMENDATIONS = 10                     # Maximum number of tourney ranking point recovery recommendations to return
 
     players: dict = field(default_factory=dict)         # e_id: Player
     songs: dict = field(default_factory=dict)           # s_id: Song
     relationships: dict = field(default_factory=dict)   # r.x: {r.y: Relationship}
-    ordering: list = field(default_factory=list)        # List[Song]
+    ordering: dict = field(default_factory=dict)        # {style: List[Song]}
 
     def dump(self):
         j = {
@@ -424,7 +426,7 @@ class Tournament:
             'players': [],
             'scores': [],
             'relationships': [],
-            'ordering': []
+            'ordering': {}
         }
         for s in self.songs.values():
             j['songs'].append(s.dump())
@@ -436,7 +438,8 @@ class Tournament:
             for y, r in y_dict.items():
                 if r.relation is not None:
                     j['relationships'].append(r.dump())
-        j['ordering'] = [s.s_id for s in self.ordering]
+        for style in self.ordering:
+            j['ordering'][style] = [s.s_id for s in self.ordering[style]]
 
         return j
 
@@ -466,7 +469,12 @@ class Tournament:
             if r.x.s_id not in obj.relationships:
                 obj.relationships[r.x.s_id] = {}
             obj.relationships[r.x.s_id][r.y.s_id] = r
-        obj.ordering = [obj.songs[s] for s in data['ordering']]
+
+        ordering_data = data['ordering']
+        if isinstance(ordering_data, list):
+            ordering_data = {'Single': data['ordering']}
+        for style in ordering_data:
+            obj.ordering[style] = [obj.songs[s] for s in ordering_data[style]]
         return obj
 
     @staticmethod
@@ -702,10 +710,10 @@ class Tournament:
 
         return self.relationships[x.s_id][y.s_id]
 
-    def view_monotonicity(self, verbal=_VERBAL, visual=_VISUAL):
+    def view_monotonicity(self, style='Single', verbal=_VERBAL, visual=_VISUAL):
         order_progressive_rel = []
-        for i_song in range(len(self.ordering)-1):
-            order_progressive_rel.append(self.relationship_lookup(self.ordering[i_song], self.ordering[i_song+1]))
+        for i_song in range(len(self.ordering[style])-1):
+            order_progressive_rel.append(self.relationship_lookup(self.ordering[style][i_song], self.ordering[style][i_song+1]))
 
         if verbal:
             for r in order_progressive_rel:
@@ -716,15 +724,16 @@ class Tournament:
             plt.plot([1 for r in order_progressive_rel])
             plt.show()
 
-    def order_songs_initial(self, verbal=_VERBAL, visual=_VISUAL):
-        self.ordering = []
+    def order_songs_initial(self, style='Single', verbal=_VERBAL, visual=_VISUAL):
+        build_ordering = []
 
         # Sort the relationships.
         # Only use upward-directional pairs
         # (i.e., second song is harder than the first)
         song_similarity = [r for x, y_dict in self.relationships.items() for y, r in y_dict.items() if
             (r.relation is not None) and
-            (len(r.e_common) >= Tournament.MIN_COMMON_PLAYERS)
+            (len(r.e_common) >= Tournament.MIN_COMMON_PLAYERS) and
+            (r.x.style == style and r.y.style == style)
         ]
         song_similarity.sort(key=lambda x: x.relation)
 
@@ -732,77 +741,81 @@ class Tournament:
             if r.relation < 1:
                 break
 
-            if len(self.ordering) == 0:
-                self.ordering = [r.x, r.y]
+            if len(build_ordering) == 0:
+                build_ordering = [r.x, r.y]
                 continue
 
             # Close as possible to its partner.
-            if r.x not in self.ordering:
-                i_end = r.y in self.ordering and self.ordering.index(r.y) or len(self.ordering)-1
+            if r.x not in build_ordering:
+                i_end = r.y in build_ordering and build_ordering.index(r.y) or len(build_ordering)-1
                 for i in range(i_end-1, -1, -1):
-                    s = self.ordering[i]
+                    s = build_ordering[i]
                     # Fucked-up Mean Value Theorem?
                     r_comp = self.relationship_lookup(r.x, s)
                     if False:
                         print(f'\t{i:3d}: {r_comp}')
                     if (r_comp.relation is not None) and (r_comp.relation < Tournament.MONO_THRESHOLD):
                         break
-                self.ordering.insert(i+1, r.x)
+                build_ordering.insert(i+1, r.x)
                 if False and (i_pair < 50):
-                    print(f'{r.pair_title()}: {i} (Lower) -> {[s for s in self.ordering]}')
-            if r.y not in self.ordering:
-                i_start = r.x in self.ordering and self.ordering.index(r.x) or 0
-                for i in range(i_start, len(self.ordering)):
-                    s = self.ordering[i]
+                    print(f'{r.pair_title()}: {i} (Lower) -> {[s for s in build_ordering]}')
+            if r.y not in build_ordering:
+                i_start = r.x in build_ordering and build_ordering.index(r.x) or 0
+                for i in range(i_start, len(build_ordering)):
+                    s = build_ordering[i]
                     # Fucked-up Mean Value Theorem?
                     r_comp = self.relationship_lookup(s, r.y)
                     if False:
                         print(f'\t{i:3d}: {r_comp}')
                     if (r_comp.relation is not None) and (r_comp.relation < Tournament.MONO_THRESHOLD):
                         break
-                self.ordering.insert(i, r.y)
+                build_ordering.insert(i, r.y)
                 if False and (i_pair < 50):
-                    print(f'{r.pair_title()}: {i} (Upper) -> {[s for s in self.ordering]}')
+                    print(f'{r.pair_title()}: {i} (Upper) -> {[s for s in build_ordering]}')
 
-        self.view_monotonicity(verbal, visual)
+        self.ordering[style] = build_ordering
+        self.view_monotonicity(style=style, verbal=verbal, visual=visual)
 
-    def order_refine_monotonic(self, verbal=_VERBAL, visual=_VISUAL):
+    def order_refine_monotonic(self, style='Single', verbal=_VERBAL, visual=_VISUAL):
         # A few iterations of plain bubble sort until
         # the worst-ordered offenders are smoothed out.
+        refined_ordering = self.ordering[style]
         for a in range(Tournament.ITERATIONS_MONOTONIC_SORT):
-            prev_ordering = [s for s in self.ordering]
-            for i in range(len(self.ordering)-1):
+            prev_ordering = [s for s in refined_ordering]
+            for i in range(len(refined_ordering)-1):
                 # Bubble sort!
-                x = self.ordering[i]
-                y = self.ordering[i+1]
+                x = refined_ordering[i]
+                y = refined_ordering[i+1]
                 r_fwd = self.relationship_lookup(x, y, allow_link=True)
                 r_rev = self.relationship_lookup(y, x, allow_link=True)
                 if r_fwd and r_fwd.relation and r_fwd.relation < Tournament.MONO_THRESHOLD:
                     # Might benefit from a swap...
                     if r_rev and r_rev.relation and r_rev.relation > r_fwd.relation:
                         # Only swap if an improvement would be observed!
-                        self.ordering = self.ordering[:i] + [y, x] + self.ordering[i+2:]
+                        refined_ordering = refined_ordering[:i] + [y, x] + refined_ordering[i+2:]
             if verbal:
                 # List the changes in the ordering.
-                for i, (prev, next) in enumerate(zip(prev_ordering, self.ordering)):
+                for i, (prev, next) in enumerate(zip(prev_ordering, refined_ordering)):
                     if prev.s_id != next.s_id:
                         print(f'#{i:3d}: {prev} -> {next}')
 
-        self.view_monotonicity(verbal, visual)
+        self.ordering[style] = refined_ordering
+        self.view_monotonicity(style=style, verbal=verbal, visual=visual)
 
-    def order_refine_by_spice(self, verbal=_VERBAL, visual=_VISUAL):
+    def order_refine_by_spice(self, style='Single', verbal=_VERBAL, visual=_VISUAL):
         # Generate the naive spice rating for each chart.
         spice_list = []
-        for i, song in enumerate(self.ordering):
+        refined_ordering = self.ordering[style]
+        for i, song in enumerate(refined_ordering):
             if i == 0:
                 spice_list = [1]               # Minimum spice is 0.0
                 continue
 
             i_nearest = i-1
-            r = self.relationship_lookup(self.ordering[i_nearest], self.ordering[i])
+            r = self.relationship_lookup(refined_ordering[i_nearest], refined_ordering[i])
             while (r.relation is None) and (i_nearest > 0):
                 i_nearest -= 1
-                r = self.relationship_lookup(self.ordering[i_nearest], self.ordering[i])
+                r = self.relationship_lookup(refined_ordering[i_nearest], refined_ordering[i])
 
             if r.relation is None:
                 # No helpful relationships - just pretend the spice is identical to the last one.
@@ -815,12 +828,12 @@ class Tournament:
         convergence = [np.log2(spice_list[-1])]
 
         for k in range(Tournament.ITERATIONS_SCOBILITY_SORT):
-            ordering_prev = [v for v in self.ordering]
+            ordering_prev = [v for v in refined_ordering]
             spice_prev = [v for v in spice_list]
-            for i, song in enumerate(self.ordering):
+            for i, song in enumerate(refined_ordering):
                 # Snip out the spice influence window.
-                window    = self.ordering[max(0, i - Tournament.SCOBILITY_WINDOW_LOWER) : min(i + Tournament.SCOBILITY_WINDOW_UPPER + 1, len(self.ordering))]
-                nearby_spice = spice_prev[max(0, i - Tournament.SCOBILITY_WINDOW_LOWER) : min(i + Tournament.SCOBILITY_WINDOW_UPPER + 1, len(self.ordering))]
+                window = refined_ordering[max(0, i - Tournament.SCOBILITY_WINDOW_LOWER) : min(i + Tournament.SCOBILITY_WINDOW_UPPER + 1, len(refined_ordering))]
+                nearby_spice = spice_prev[max(0, i - Tournament.SCOBILITY_WINDOW_LOWER) : min(i + Tournament.SCOBILITY_WINDOW_UPPER + 1, len(refined_ordering))]
 
                 # Check relationships with the pivot chart.
                 rel_window = [self.relationship_lookup(w, song) for w in window]
@@ -835,35 +848,36 @@ class Tournament:
                 spice_list[i] = influence
 
             # Sort the chart list again based on the new spice values.
-            spice_sort = [x for x in zip(spice_list, self.ordering)]
+            spice_sort = [x for x in zip(spice_list, refined_ordering)]
             spice_sort.sort(key=lambda x: x[0])
             spice_list = [x[0] / spice_sort[0][0] for x in spice_sort]          # Keep minimum spice pinned at 0.0
-            self.ordering = [x[1] for x in spice_sort]
+            refined_ordering = [x[1] for x in spice_sort]
 
             convergence.append(np.log2(spice_list[-1]))
             if verbal:
                 print(f'>>> Iteration {k+1:2d}: max spice = {convergence[-1]:0.6f}')
                 if False:
-                    for i, (prev, next) in enumerate(zip(ordering_last, self.ordering)):
+                    for i, (prev, next) in enumerate(zip(ordering_last, refined_ordering)):
                         if prev.s_id != next.s_id:
                             print(f'Iteration {k+1:2d}... #{i:3d}: {prev} -> {next}')
 
-            for i, song in enumerate(self.ordering):
+            for i, song in enumerate(refined_ordering):
                 song.spice = spice_list[i]
 
+        self.ordering[style] = refined_ordering
         return convergence
 
-    def view_spice_ranking(self, fp=None):
-        for s in self.ordering:
+    def view_spice_ranking(self, style='Single', fp=None):
+        for s in self.ordering[style]:
             print(f"{np.log2(s.spice):5.3f}🌶 {str(s):>60s}", file=fp or sys.stdout)
 
-    def view_pvs_ranking(self, fp=None):
-        pvs = sorted([s for s in self.ordering], key=lambda s: s.value / s.spice, reverse=True)
+    def view_pvs_ranking(self, style='Single', fp=None):
+        pvs = sorted([s for s in self.ordering[style]], key=lambda s: s.value / s.spice, reverse=True)
         for s in pvs:
             print(f"{s.value / s.spice:5.0f} pts / 2^🌶    ({s.value:4.0f} max points, {np.log2(s.spice):5.3f}🌶) {str(s):>80s}", file=fp or sys.stdout)
 
     def calc_point_curve(self, v: np.ndarray) -> np.ndarray:
-        if self.POINT_CURVE == 'itl2023':
+        if self.POINT_CURVE in ['itl2023', 'itl2024']:
             log_base = 1.1032889141348
             pow_base = 61
             inflect = 50
@@ -883,7 +897,7 @@ class Tournament:
     
 
     def calc_point_curve_inv(self, p: np.ndarray) -> np.ndarray:
-        if self.POINT_CURVE == 'itl2023':
+        if self.POINT_CURVE in ['itl2023', 'itl2024']:
             log_base = 1.1032889141348
             pow_base = 61
             inflect = 50
@@ -903,15 +917,15 @@ class Tournament:
         return v
 
 
-    def calc_recommendations(self, player: Player, dst_dir=None, verbal=_VERBAL, visual=_VISUAL, use_player_name=False):
+    def calc_recommendations(self, player: Player, style='Single', dst_dir=None, verbal=_VERBAL, visual=_VISUAL, use_player_name=False):
         if player.scobility is None or player.comfort_zone is None or player.timing_power is None:
             raise Exception(f'Can\'t recommend charts to {player.name} (#{player.e_id}) without first calculating scobility')
 
-        scores = np.full((len(self.ordering),), np.nan)
-        spices = np.full((len(self.ordering),), np.nan)
-        values = np.full((len(self.ordering),), np.nan)
+        scores = np.full((len(self.ordering[style]),), np.nan)
+        spices = np.full((len(self.ordering[style]),), np.nan)
+        values = np.full((len(self.ordering[style]),), np.nan)
 
-        for i, s in enumerate(self.ordering):
+        for i, s in enumerate(self.ordering[style]):
             if s.s_id in player.scores:
                 scores[i] = player.scores[s.s_id].value
             if s.spice:
@@ -962,7 +976,7 @@ class Tournament:
         # as well as the target score that brings up the scobility quality
         # to the player's skill trend.
         p_quality = p_spices[p_played] - p_scores[p_played]
-        p_songs = np.array(self.ordering)[p_played]
+        p_songs = np.array(self.ordering[style])[p_played]
         p_ranking = [z for z in zip(
             [s for s in p_songs],
             [q for q in p_quality],
@@ -1046,13 +1060,13 @@ class Tournament:
         if verbal:
             print(stats.getvalue())
 
-    def calc_player_scobility(self, player: Player, dst_dir=None, verbal=_VERBAL, visual=_VISUAL, use_player_name=False):
-        scores = np.full((len(self.ordering),), np.nan)
-        spices = np.full((len(self.ordering),), np.nan)
-        counts = np.full((len(self.ordering),), np.nan)
-        dates  = np.full((len(self.ordering),), np.nan)
+    def calc_player_scobility(self, player: Player, style='Single', dst_dir=None, verbal=_VERBAL, visual=_VISUAL, use_player_name=False):
+        scores = np.full((len(self.ordering[style]),), np.nan)
+        spices = np.full((len(self.ordering[style]),), np.nan)
+        counts = np.full((len(self.ordering[style]),), np.nan)
+        dates  = np.full((len(self.ordering[style]),), np.nan)
 
-        for i, s in enumerate(self.ordering):
+        for i, s in enumerate(self.ordering[style]):
             if s.s_id in player.scores:
                 scores[i] = player.scores[s.s_id].value
                 counts[i] = player.scores[s.s_id].plays
@@ -1093,7 +1107,7 @@ class Tournament:
         # TODO: derive a volforce-like "tournament power" that rewards
         # playing more songs as well as getting better scores
         # this is a pretty silly first stab at it imo
-        player.tourney_power = sum(p_quality) / len(p_quality) * np.sqrt(len(p_quality) / len(self.ordering)) * Tournament.MAX_TOURNEY_POWER
+        player.tourney_power = sum(p_quality) / len(p_quality) * np.sqrt(len(p_quality) / len(self.ordering[style])) * Tournament.MAX_TOURNEY_POWER
         player.scobility = sum(p_quality) / len(p_quality)  # Simple average...
         player.timing_power = coefs[0]
         player.comfort_zone = coefs[1]
@@ -1121,9 +1135,9 @@ class Tournament:
         plt.title(f'Scobility {_VERSION} plot for {player}\nRating: $\\bf{{{player.scobility:0.3f}}}$')
         if dst_dir is not None:
             if use_player_name:
-                plt.savefig(os.path.join(dst_dir, f'{player.e_id}-{slugify(player.name)}.png'))
+                plt.savefig(os.path.join(dst_dir, f'{player.e_id}-{slugify(player.name)}-{style}.png'))
             else:
-                plt.savefig(os.path.join(dst_dir, f'{player.e_id}.png'))
+                plt.savefig(os.path.join(dst_dir, f'{player.e_id}-{style}.png'))
         if visual:
             plt.show()
         plt.close('all')
@@ -1198,9 +1212,9 @@ def process(src='itl2024', force_recalculate_spice: bool = False):
     elif src == 'itl2024':
         # Personally scraped
         jit = False
-        latest_itl2024 = sorted([d for d in os.listdir('itl2024_prep') if re.match('^\d+$', d)])[-1]
+        latest_itl2024 = sorted([d for d in os.listdir('itl2024_data') if re.match('^\d+$', d)])[-1]
         scrape_designator = '_' + latest_itl2024
-        root = os.path.join('itl2024_prep', latest_itl2024)
+        root = os.path.join('itl2024_data', latest_itl2024)
     elif src == '3ic':
         # Privately provided
         jit = True
@@ -1221,20 +1235,21 @@ def process(src='itl2024', force_recalculate_spice: bool = False):
             tourney.calc_relationships_jit(src='3ic_data/song_scores', verbal=False)
         else:
             tourney.calc_relationships(verbal=False)
-        print('========================================================================')
-        print('=== Setting up closest-neighbor initial order...')
-        tourney.order_songs_initial(verbal=False, visual=False)
-        print('========================================================================')
-        print('=== Bubbling out non-monotonicities...')
-        tourney.order_refine_monotonic(verbal=False, visual=False)
-        print('========================================================================')
-        print('=== Refining spice ranking using neighborhood influence...')
-        tourney.order_refine_by_spice(verbal=True, visual=False)
-        print('========================================================================')
-        print('=== Spice ranking calculation complete!...')
-        # itl.view_spice_ranking()
-        with open(f'{src}_data/spice_ranking{scrape_designator}.txt', 'w', encoding='utf-8') as fp:
-            tourney.view_spice_ranking(fp)
+        for style in ['Single', 'Double']:
+            print(f'======= {style} =========================================================')
+            print('=== Setting up closest-neighbor initial order...')
+            tourney.order_songs_initial(style=style, verbal=False, visual=False)
+            print(f'======= {style} =========================================================')
+            print('=== Bubbling out non-monotonicities...')
+            tourney.order_refine_monotonic(style=style, verbal=False, visual=False)
+            print(f'======= {style} =========================================================')
+            print('=== Refining spice ranking using neighborhood influence...')
+            tourney.order_refine_by_spice(style=style, verbal=True, visual=False)
+            print(f'======= {style} =========================================================')
+            print('=== Spice ranking calculation complete!...')
+            # itl.view_spice_ranking()
+            with open(f'{src}_data/spice_ranking{scrape_designator}_{style.lower()}.txt', 'w', encoding='utf-8') as fp:
+                tourney.view_spice_ranking(style=style, fp=fp)
 
         # Store (and re-load?)
         tourney_fn = f'scobility_{src}{scrape_designator}.json'
@@ -1250,19 +1265,21 @@ def process(src='itl2024', force_recalculate_spice: bool = False):
         with open(tourney_fn, 'r') as fp:
             tourney = Tournament.load(json.load(fp))
 
-    with open(f'{src}_data/pvs_ranking{scrape_designator}.txt', 'w', encoding='utf-8') as fp:
-        tourney.view_pvs_ranking(fp)
+    for style in ['Single', 'Double']:
+        with open(f'{src}_data/pvs_ranking{scrape_designator}.txt', 'w', encoding='utf-8') as fp:
+            tourney.view_pvs_ranking(style=style, fp=fp)
     print('========================================================================')
     print('=== Performing scobility calculations...')
     output_dir = os.path.join(f'{src}_data', scrape_designator[1:], 'scobility')
     os.makedirs(output_dir, exist_ok=True)
     for p in tourney.players.values():
-        try:
-            tourney.calc_player_scobility(p, dst_dir=output_dir, verbal=False, visual=False, use_player_name=True)
-            tourney.calc_recommendations(p,  dst_dir=output_dir, verbal=False, visual=False, use_player_name=True)
-        except Exception as e:
-            print(f'Scobility calculation failed for {p} (probably due to lack of sufficient score data)', file=sys.stderr)
-            tb.print_exc(file=sys.stderr)
+        for style in ['Single', 'Double']:
+            try:
+                tourney.calc_player_scobility(p, style=style, dst_dir=output_dir, verbal=False, visual=False, use_player_name=True)
+                tourney.calc_recommendations(p,  style=style, dst_dir=output_dir, verbal=False, visual=False, use_player_name=True)
+            except Exception as e:
+                print(f'Scobility calculation ({style}) failed for {p} (probably due to lack of sufficient score data)', file=sys.stderr)
+                tb.print_exc(file=sys.stderr)
     print('========================================================================')
     print('=== Ranking players by scobility...')
     # itl.view_scobility_ranking()
