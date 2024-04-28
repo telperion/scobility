@@ -1,0 +1,33 @@
+{
+  "name": "scobility-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@faker-js/faker": "^8.4.1",
+    "antd": "^5.16.1",
+    "chart.js": "^4.4.2",
+    "dotenv": "^16.4.5",
+    "next": "14.1.1",
+    "node-fetch": "^2.6.1",
+    "react": "^18",
+    "react-chartjs-2": "^5.2.0",
+    "react-dom": "^18"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "autoprefixer": "^10.0.1",
+    "eslint": "^8",
+    "eslint-config-next": "14.1.1",
+    "postcss": "^8",
+    "tailwindcss": "^3.3.0",
+    "typescript": "^5"
+  }
+}

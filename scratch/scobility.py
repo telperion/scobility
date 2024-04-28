@@ -1052,9 +1052,9 @@ class Tournament:
 
         if dst_dir is not None:
             if use_player_name:
-                dst_log = os.path.join(dst_dir, f'{player.e_id}-{slugify(player.name)}.txt')
+                dst_log = os.path.join(dst_dir, f'{player.e_id}-{slugify(player.name)}-{style}.txt')
             else:
-                dst_log = os.path.join(dst_dir, f'{player.e_id}.txt')
+                dst_log = os.path.join(dst_dir, f'{player.e_id}-{style}.txt')
             with open(dst_log, 'w', encoding='utf-8') as fp:
                 fp.write(stats.getvalue())
         if verbal:
@@ -1302,5 +1302,5 @@ def process(src='itl2024', force_recalculate_spice: bool = False):
 
 
 if __name__ == '__main__':
-    process(src='itl2024', force_recalculate_spice=True)
+    process(src='itl2024', force_recalculate_spice=False)
     

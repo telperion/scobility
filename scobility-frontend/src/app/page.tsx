@@ -1,6 +1,6 @@
 "use client"
 
-import React, { MouseEvent, useRef } from 'react';
+import React, { MouseEvent, useRef, useState } from 'react';
 import type { InteractionItem } from 'chart.js';
 import {
   Chart as ChartJS,
@@ -20,6 +20,29 @@ import {
 import { Select, Space, Switch, Table } from 'antd';
 import type { TableColumnsType, TableProps } from 'antd';
 import { faker } from '@faker-js/faker';
+import fetch from 'node-fetch';
+
+async function get_spice_data<T>(catalog: string): Promise<T> {
+  return fetch(`https://scobility.azurewebsites.net/catalog/${catalog}/chart/all`).then(
+    response => {
+      if (!response.ok) {
+        throw new Error(response.statusText);
+      }
+      return response.json() as Promise<T>
+    }
+  );
+}
+
+async function get_score_data<T>(catalog: string, player_id: number): Promise<T> {
+  return fetch(`https://scobility.azurewebsites.net/catalog/${catalog}/score/${player_id}`).then(
+    response => {
+      if (!response.ok) {
+        throw new Error(response.statusText);
+      }
+      return response.json() as Promise<T>
+    }
+  );
+}
 
 ChartJS.register(
   LinearScale,
@@ -189,6 +212,33 @@ const onChange: TableProps<DataType>['onChange'] = (pagination, filters, sorter,
 
 
 export default function Home() {
+  const [selectedCatalog, setSelectedCatalog] = useState("ITL2024");
+  const [selectedPlayerID, setSelectedPlayerID] = useState(1);
+  const [spiceData, setSpiceData] = useState({});
+  const [scoreData, setScoreData] = useState({});
+
+  const updateSpiceData = (catalog: string) => {
+    setSelectedCatalog(catalog)
+    get_spice_data(catalog).then((data) => {
+      setSpiceData(data)
+      console.log(spiceData)
+      updateScoreData(1)
+    })
+  }
+
+  const updateScoreData = (id: number) => {
+    setSelectedPlayerID(id)
+    if (id <= 0) {
+      setScoreData({})
+    }
+    else {
+      get_score_data(selectedCatalog, id).then((data) => {
+        setScoreData(data)
+        console.log(scoreData)
+      })
+    }
+  }
+
   return (
     <main className="grid grid-cols-4 grid-flow-row gap-4">
       <div>
@@ -201,17 +251,21 @@ export default function Home() {
               {value: "ITL2023", label: "ITL2023"},
               {value: "SMX", label: "StepManiaX"},
             ]}
+            value={selectedCatalog}
+            onChange={e => updateSpiceData(e)}
           />
         </Space>
       </div>
       <div>
         <Space wrap>
           <Select
-            defaultValue="Player 0"
+            defaultValue={1}
             style={{ width: 120 }}
             options={
-              Array(20).fill(0).map((_, i) => ({value: i, label: "Player " + i.toString()}))
+              Array(20).fill(0).map((_, i) => ({value: (i+1), label: "Player " + (i+1).toString()}))
             }
+            value={selectedPlayerID}
+            onChange={e => updateScoreData(e)}
           />
         </Space>
       </div>
