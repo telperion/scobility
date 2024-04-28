@@ -219,8 +219,13 @@ def _lookup_catalog(catalog_name: str) -> Dict:
         }
 
 
-def _lookup_spice(catalog_name: str, chart_id: Union[int, str]) -> Dict:
-    filter_fields = ['chart_id', 'hash', 'spice', 'spice_calc_time']
+def _lookup_spice(catalog_name: str, chart_id: Union[int, str], chart_detail: str = 'min') -> Dict:
+    if chart_detail == 'all':
+        filter_fields = list(Chart.model_fields.keys())
+        print(filter_fields)
+    else:
+        filter_fields = ['chart_id', 'hash', 'spice', 'spice_calc_time']
+
     try:
         if catalog_name not in _CATALOGS:
             return {
@@ -265,8 +270,13 @@ def _lookup_spice(catalog_name: str, chart_id: Union[int, str]) -> Dict:
         }
 
 
-def _list_all_spice(catalog_name: str, key: str = 'id') -> Dict:
-    filter_fields = ['chart_id', 'hash', 'spice', 'spice_calc_time']
+def _list_all_spice(catalog_name: str, key: str = 'id', chart_detail: str = 'min') -> Dict:
+    if chart_detail == 'all':
+        filter_fields = list(Chart.model_fields.keys())
+        print(filter_fields)
+    else:
+        filter_fields = ['chart_id', 'hash', 'spice', 'spice_calc_time']
+
     try:
         if catalog_name not in _CATALOGS:
             return {
@@ -344,8 +354,15 @@ def _lookup_player(catalog_name: str, entrant_id: int) -> Dict:
         }
 
 
-def _list_all_players(catalog_name: str) -> Dict:
-    filter_fields = ['entrant_id', 'scobility', 'timing_power', 'comfort_zone', 'scobility_calc_time']
+def _list_all_players(catalog_name: str, player_detail: str = 'min') -> Dict:
+    if player_detail == 'all':
+        filter_fields = list(Chart.model_fields.keys())
+        print(filter_fields)
+    elif player_detail == 'name':
+        filter_fields = ['entrant_id', 'name', 'scobility_calc_time']
+    else:
+        filter_fields = ['entrant_id', 'scobility', 'timing_power', 'comfort_zone', 'scobility_calc_time']
+
     try:
         if catalog_name not in _CATALOGS:
             return {
@@ -677,7 +694,7 @@ def get_catalog(catalog_name: str) -> JSONResponse:
 
 # Retrieve spice rating for a particular chart ID or hash, or for all charts
 @api.get("/catalog/{catalog_name}/chart/{chart_q}")
-def get_chart(catalog_name: str, chart_q: str) -> JSONResponse:
+def get_chart(catalog_name: str, chart_q: str, chart_detail: str = 'min') -> JSONResponse:
     result = _lookup_catalog(catalog_name)
     if 'data' not in result:    
         return {
@@ -692,7 +709,7 @@ def get_chart(catalog_name: str, chart_q: str) -> JSONResponse:
             result = _lookup_spice(catalog_name, cx)
         elif chart_q.lower() in ["all", "id", "hash"]:
             print(f"Listing all charts in {catalog_name} catalog...")
-            result = _list_all_spice(catalog_name, chart_q.lower())
+            result = _list_all_spice(catalog_name, chart_q.lower(), chart_detail.lower())
         else:
             print(f"Looking for chart hash={cx} in {catalog_name} catalog...")
             result = _lookup_spice(catalog_name, cx)
@@ -705,6 +722,12 @@ def get_chart(catalog_name: str, chart_q: str) -> JSONResponse:
             'status': False,
             'message': "Something unexpected happened"
         }
+    
+
+# Retrieve spice rating for a particular chart ID or hash, or for all charts
+@api.get("/catalog/{catalog_name}/chart/{chart_q}/detail/{chart_detail}")
+def get_chart_detail(catalog_name: str, chart_q: str, chart_detail: str) -> JSONResponse:
+    return get_chart(catalog_name, chart_q, chart_detail)
 
 
 # Retrieve cached scobility for a specific entrant ID
@@ -744,6 +767,30 @@ def get_scobility_all(catalog_name: str) -> JSONResponse:
     try:
         print(f"Listing scobility for all players in {catalog_name} catalog...")
         result = _list_all_players(catalog_name)
+
+        return JSONResponse(content=result,
+            status_code=result.get('status') and 200 or 404)
+    except Exception as e:
+        print(e)
+        return {
+            'status': False,
+            'message': "Something unexpected happened"
+        }
+    
+
+# Retrieve player names for all entrants in a catalog
+@api.get("/catalog/{catalog_name}/players")
+def get_players(catalog_name: str) -> JSONResponse:
+    result = _lookup_catalog(catalog_name)
+    if 'data' not in result:    
+        return {
+            'status': False,
+            'message': f"Couldn't find {catalog_name} in scobility catalogs"
+        }
+    
+    try:
+        print(f"Listing player info for all players in {catalog_name} catalog...")
+        result = _list_all_players(catalog_name, player_detail='name')
 
         return JSONResponse(content=result,
             status_code=result.get('status') and 200 or 404)
