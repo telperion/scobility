@@ -330,12 +330,11 @@ export default function Home(initialized: boolean = false) {
 
 
   return (
-    <main className="grid grid-cols-4 grid-flow-row gap-4">
+    <main className="grid grid-cols-3 gap-2">
       <div>
         <Space wrap>
           <Select
             defaultValue="ITL2024"
-            style={{ width: 120 }}
             options={[
               {value: "ITL2024", label: "ITL2024"},
               {value: "ITL2023", label: "ITL2023"},
@@ -350,49 +349,31 @@ export default function Home(initialized: boolean = false) {
         <Space wrap>
           <Select
             defaultValue={1}
-            style={{ width: 120 }}
             options={[...playerData]}
             value={selectedPlayerID}
             onChange={e => setSelectedPlayerID(e)}
           />
         </Space>
       </div>
-      <div className="col-span-2">
+      <div>
         <Switch checkedChildren="Single" unCheckedChildren="Double" defaultChecked />
       </div>
 
-      <div className="col-span-2">
-        <Chart
-          type="bubble"
-          options={options}
-          data={graphData}
-          className="size-full"
-        />
+      <div>
+        Scobility rating...
       </div>
-      <div className="col-span-2">
-        <Table
-          columns={columns}
-          dataSource={[...tableData]}
-          onChange={onChange}
-          showSorterTooltip={{ target: 'sorter-icon' }}
-        />
-      </div>
-
       <div className="col-span-2">
         Best Fits
       </div>
-      <div className="col-span-2">
-        Scobility rating...
-      </div>
 
+      <div className="row-span-3 text-4xl">
+        🌶️ LARGE NUMBER 🌶️
+      </div>
       <div>
         mild
       </div>
       <div>
         M(s) = m(s-u) + b
-      </div>
-      <div className="col-span-2 row-span-3 text-4xl">
-        🌶️ LARGE NUMBER 🌶️
       </div>
 
       <div>
@@ -407,6 +388,24 @@ export default function Home(initialized: boolean = false) {
       </div>
       <div>
         (u, b)
+      </div>
+
+      <div className="col-span-3">
+        <Chart
+          type="bubble"
+          options={options}
+          data={graphData}
+          className="size-full"
+        />
+      </div>
+
+      <div className="col-span-3">
+        <Table
+          columns={columns}
+          dataSource={[...tableData]}
+          onChange={onChange}
+          showSorterTooltip={{ target: 'sorter-icon' }}
+        />
       </div>
     </main>
   );
