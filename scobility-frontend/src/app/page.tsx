@@ -22,6 +22,7 @@ import type { TableColumnsType, TableProps } from 'antd';
 import { faker, zh_CN } from '@faker-js/faker';
 import fetch from 'node-fetch';
 
+
 async function get_spice_data<T>(catalog: string): Promise<T> {
   return fetch(`https://scobility.azurewebsites.net/catalog/${catalog}/chart/id/detail/all`).then(
     response => {
@@ -129,7 +130,7 @@ interface DataType {
   title: string;
   spice: number;
   quality: number;
-  pvs: number;
+  currentScore: number;
   targetScore: number;
   recoverableTP: number;
   recoverableRP: number;
@@ -149,35 +150,35 @@ const columns: TableColumnsType<DataType> = [
     title: '🌶️',
     dataIndex: 'spice',
     sorter: (a, b) => a.spice - b.spice,
-    render: (v) => (v ? v.toFixed(2) : "n/a"),
+    render: (v) => (v !== null ? v.toFixed(2) : "n/a"),
     sortDirections: ['ascend', 'descend'],
   },
   {
     title: 'Quality',
     dataIndex: 'quality',
     sorter: (a, b) => a.quality - b.quality,
-    render: (v) => (v ? v.toFixed(2) : "n/a"),
+    render: (v) => (v !== null ? v.toFixed(2) : "n/a"),
     sortDirections: ['ascend', 'descend'],
   },
   {
-    title: 'PVS',
-    dataIndex: 'pvs',
-    sorter: (a, b) => a.pvs - b.pvs,
-    render: (v) => (v ? v.toFixed(1) : "n/a"),
+    title: 'Current',
+    dataIndex: 'currentScore',
+    sorter: (a, b) => a.currentScore - b.currentScore,
+    render: (v) => (v !== null ? ((100 * v).toFixed(2)).toString() + "%" : "n/a"),
     sortDirections: ['ascend', 'descend'],
   },
   {
     title: 'Target',
     dataIndex: 'targetScore',
     sorter: (a, b) => a.targetScore - b.targetScore,
-    render: (v) => (v ? ((100 * v).toFixed(2)).toString() + "%" : "n/a"),
+    render: (v) => (v !== null ? ((100 * v).toFixed(2)).toString() + "%" : "n/a"),
     sortDirections: ['ascend', 'descend'],
   },
   {
     title: 'TP 🆙',
     dataIndex: 'recoverableTP',
     sorter: (a, b) => a.recoverableTP - b.recoverableTP,
-    render: (v) => (v ? parseInt(v) : "n/a"),
+    render: (v) => (v !== null ? parseInt(v) : "n/a"),
     sortDirections: ['ascend', 'descend'],
     filters: [
       {
@@ -191,7 +192,7 @@ const columns: TableColumnsType<DataType> = [
     title: 'RP 🆙',
     dataIndex: 'recoverableRP',
     sorter: (a, b) => a.recoverableRP - b.recoverableRP,
-    render: (v) => (v ? parseInt(v) : "n/a"),
+    render: (v) => (v !== null ? parseInt(v) : "n/a"),
     sortDirections: ['ascend', 'descend'],
     filters: [
       {
@@ -205,7 +206,7 @@ const columns: TableColumnsType<DataType> = [
     title: 'XP 🆙',
     dataIndex: 'recoverableXP',
     sorter: (a, b) => a.recoverableXP - b.recoverableXP,
-    render: (v) => (v ? parseInt(v) : "n/a"),
+    render: (v) => (v !== null ? parseInt(v) : "n/a"),
     sortDirections: ['ascend', 'descend'],
     filters: [
       {
@@ -223,7 +224,7 @@ const initialTableData = Array(100).fill(0).map((_, i) =>
     title: "Chart " + i.toString(),
     spice: faker.number.float({min: 0, max: 10}),
     quality: faker.number.float({min: 0, max: 10}),
-    pvs: faker.number.float({min: 100, max: 1000}),
+    currentScore: faker.number.float({min: 0.9, max: 1.0}),
     targetScore: faker.number.float({min: 0.9, max: 1.0}),
     recoverableTP: Math.max(0, faker.number.float({min: -100, max: 1000})),
     recoverableRP: Math.max(0, faker.number.float({min: -200, max: 1000})),
@@ -251,6 +252,8 @@ const initialScobilityStats = {
 export default function Home(initialized: boolean = false) {
   const [selectedCatalog, setSelectedCatalog] = useState("ITL2024");
   const [selectedPlayerID, setSelectedPlayerID] = useState(1);
+  const [styleFilter, setStyleFilter] = useState(true);
+  const [fitAlgorithm, setFitAlgorithm] = useState(true);
   const [spiceData, setSpiceData] = useState(Array(0));
   const [scoreData, setScoreData] = useState(Array(0));
   const [playerData, setPlayerData] = useState(Array(10).fill(0).map((_, i) => ({value: (i+1), label: "Player " + (i+1).toString()})));
@@ -258,6 +261,7 @@ export default function Home(initialized: boolean = false) {
   const [graphData, setGraphData] = useState(initialGraphData);
   const [graphOptions, setGraphOptions] = useState(initialGraphOptions);
   const [scobilityStats, setScobilityStats] = useState(initialScobilityStats);
+  const [recoverability, setRecoverability] = useState();
 
   const updateSpiceData = async () => {
     const response = await get_spice_data(selectedCatalog)
@@ -284,11 +288,13 @@ export default function Home(initialized: boolean = false) {
     return {
       key: row.chart_id,
       title: {"dance-single": "[S", "dance-double": "[D"}[chart_info.style] + chart_info.meter.toString() + "] " + chart_info.title,
+      meter: chart_info.meter,
+      score: row.score,
       style: chart_info.style,
       spice: Math.log2(chart_info.spice),
       value: chart_info.value,
       quality: Math.log2(chart_info.spice) - Math.log2(1.003 - row.score),
-      plays: row.plays
+      plays: row.plays,
     }
   }
 
@@ -311,8 +317,8 @@ export default function Home(initialized: boolean = false) {
   const dumbass_least_squares_free = (a: Array<number>, b: Array<number>) => {
     const components = dumbass_least_squares_components(a, b)
     const det = components.ones*components.s2 - components.s*components.s
-    const c0 = (-components.s*components.q + components.ones*components.sq)/det
-    const c1 = (components.s2*components.q - components.s*components.sq)/det
+    const c1 = (-components.s*components.q + components.ones*components.sq)/det
+    const c0 = (components.s2*components.q - components.s*components.sq)/det
     const residual = _sum_squared(a.map((v, i) => (b[i] - (c1*v + c0))))
     return {
       c0: c0,
@@ -447,24 +453,80 @@ export default function Home(initialized: boolean = false) {
       if (best_fit_so_far.cut_point < 0 || best_fit_here.residual < best_fit_so_far.residual) {
         best_fit_so_far = best_fit_here
       }
-      console.log(best_fit_here)
-      console.log(best_fit_so_far)
+      // console.log(best_fit_here)
+      // console.log(best_fit_so_far)
     }
     return best_fit_so_far
   }
 
 
-  const calculateScobility = (score_data) => {
+  const log_base = 1.1032889141348
+  const pow_base = 61
+  const inflect = 50
+  const expct_to_rppct = (expct: number) => {
+    const v_lo = (expct < 50) ? expct : 50
+    const v_hi = (expct > 50) ? expct : 50
+
+    return Math.log(v_lo + 1) / Math.log(log_base) + Math.pow(pow_base, (v_hi-inflect)/(100-inflect)) - 1
+  }
+  const rppct_to_expct = (rppct: number) => {
+    const piecewise_border = Math.log(inflect + 1)/Math.log(log_base) - 1
+    if (rppct < piecewise_border) {
+      return Math.pow(log_base, rppct) - 1
+    }
+    else {
+      return (100-inflect)*Math.log(rppct - piecewise_border)/Math.log(pow_base) + inflect
+    }
+  }
+
+  const ep_cutoff = 85.0
+  const expct_curve = (expct: number) => {
+    return (Math.pow(100, (expct < ep_cutoff ? 0 : (expct-ep_cutoff)) / (100.0 - ep_cutoff)) - 1) * (1000.0/99.0)
+  }
+
+
+  const calculateScobility = (score_data, fit: boolean = true) => {
     const spice_values = score_data.map((row) => (row.spice))
     const quality_values = score_data.map((row) => (row.quality))
 
-    // const coefs = dumbass_least_squares_free(spice_values, quality_values)
-    const coefs = unga_bunga_fit(spice_values, quality_values)
     const tourney_power = 0.5 * Math.log2(_sum(quality_values.map((v) => (Math.pow(2, v*2)))))
-
-    return {
-      'tourney_power': tourney_power,
-      'coefs': coefs
+    if (fit) {
+      const coefs = unga_bunga_fit(spice_values, quality_values)
+      return {
+        'tourney_power': tourney_power,
+        'coefs': coefs,
+        'quality_fit': (s: number) => {
+          if (s <= coefs.unga) {
+            return coefs.mild_slope * (s - coefs.unga) + coefs.bunga
+          }
+          else {
+            return coefs.hot_slope * (s - coefs.unga) + coefs.bunga
+          }
+        }
+      }
+    }
+    else {
+      const coefs_line = dumbass_least_squares_free(spice_values, quality_values)
+      const coefs = {
+        cut_point: 0,
+        unga: 0,
+        bunga: coefs_line.c0,
+        mild_slope: coefs_line.c1,
+        hot_slope: coefs_line.c1,
+        residual: coefs_line.residual,
+      }
+      return {
+        'tourney_power': tourney_power,
+        'coefs': coefs,
+        'quality_fit': (s: number) => {
+          if (s <= coefs.unga) {
+            return coefs.mild_slope * (s - coefs.unga) + coefs.bunga
+          }
+          else {
+            return coefs.hot_slope * (s - coefs.unga) + coefs.bunga
+          }
+        }
+      }
     }
   }
 
@@ -472,32 +534,115 @@ export default function Home(initialized: boolean = false) {
     if (selectedPlayerID > 0) {
       const response = await get_score_data(selectedCatalog, selectedPlayerID)
       console.log(response)
-      const temp_score_data = Object.values(response.data).map((row) => cleanScorePoint(row)).filter((row) => (row !== null)).sort((a, b) => (a.spice - b.spice))
-      const temp_scobility_stats = calculateScobility(temp_score_data)
+      const styleMatch = styleFilter ? "dance-single" : "dance-double"
+      const temp_score_data = Object.values(response.data).map(
+        (row) => cleanScorePoint(row)
+      ).filter(
+        (row) => (row !== null)
+      ).filter(
+        (row) => (row!.style == styleMatch)
+      ).sort(
+        (a, b) => (a.spice - b.spice)
+      )
+      const temp_scobility_stats = calculateScobility(temp_score_data, fitAlgorithm)
       setScoreData(temp_score_data)
       setScobilityStats(temp_scobility_stats)
+
       const high_spice = temp_score_data.reduce((acc, row) => Math.max(acc, row.spice), 0)
       const coefs = temp_scobility_stats.coefs
       setGraphData(generateGraphData(
         temp_score_data.map((row) => (row.spice)),
         temp_score_data.map((row) => (row.quality)),
         temp_score_data.map((row) => (row.plays)),
-        coefs.cut_point > 0 ? [0, coefs.unga, high_spice] : [],
-        coefs.cut_point > 0 ? [coefs.mild_slope * (0 - coefs.unga) + coefs.bunga, coefs.bunga, coefs.hot_slope * (high_spice - coefs.unga) + coefs.bunga] : [],
+        coefs.cut_point >= 0 ? [0, coefs.unga, high_spice] : [],
+        coefs.cut_point >= 0 ? [coefs.mild_slope * (0 - coefs.unga) + coefs.bunga, coefs.bunga, coefs.hot_slope * (high_spice - coefs.unga) + coefs.bunga] : [],
       ))
-      const label_callback = (context) => ([temp_score_data[context.dataIndex].title, `${context.parsed.x.toFixed(2)} spice, ${context.parsed.y.toFixed(2)} quality`])
+      const label_callback = (context) => (context.datasetIndex == 0 ? [temp_score_data[context.dataIndex].title, `${context.parsed.x.toFixed(2)} spice, ${context.parsed.y.toFixed(2)} quality`] : "")
       setGraphOptions(generateOptions(label_callback))
-      setTableData(Object.values(temp_score_data).map((row) => ({
-        key: row.chart_id,
+
+      const target_scores = temp_score_data.map((row) => {
+        // TODO: double-check this math
+        const target_missing_ex = 1.003 - Math.pow(2, row.spice - temp_scobility_stats.quality_fit(row.spice))
+        const target_score = ((target_missing_ex < 0) ? 0 : (target_missing_ex > 1) ? 1 : target_missing_ex)
+        const target_rp = Math.round(expct_to_rppct(target_score * 100) * row.value / 100)
+        const current_rp = Math.round(expct_to_rppct(row.score * 100) * row.value / 100)
+        const target_xp = Math.round(expct_curve(target_score * 100))
+        const current_xp = Math.round(expct_curve(row.score * 100))
+
+        return {
+          key: row.key,
+          title: row.title,
+          meter: row.meter,
+          score: row.score,
+          style: row.style,
+          spice: row.spice,
+          value: row.value,
+          quality: row.quality,
+          plays: row.plays,
+          current_rp: current_rp,
+          current_xp: current_xp,
+          target_score: target_score,
+          target_rp: target_rp,
+          target_xp: target_xp,
+        }
+      })
+      const ranked_by_current_rp = target_scores.sort((a, b) => (b.current_rp - a.current_rp)) // descending order
+      const rp_hand_size = (styleFilter ? 75 : 50)  // 75 for single, 50 for double
+      const rp_cutoff = (target_scores.length < rp_hand_size) ? 0 : target_scores[rp_hand_size-1].current_rp // has to replace something
+      const ranked_by_current_xp = target_scores.sort((a, b) => (b.current_xp - a.current_xp)) // descending order
+      const xp_hand_size = {7: 1, 8: 2, 9: 3, 10: 4, 11: 4, 12: 3, 13: 2, 14: 1}
+      const xp_contenders = Object.fromEntries(Object.keys(xp_hand_size).map((key) => [key, []]))
+      for (let row of ranked_by_current_xp) {
+        if (row.meter in xp_hand_size) {
+          if (xp_contenders[row.meter].length < xp_hand_size[row.meter]) {
+            xp_contenders[row.meter].push(row.score)
+          }
+        }
+      }
+      console.log(xp_contenders)
+      const xp_cutoff = Object.fromEntries(Object.keys(xp_hand_size).map((k) => [k, (xp_contenders[k].length < xp_hand_size[k]) ? 0 : expct_curve(xp_contenders[k][xp_hand_size[k]-1] * 100)]))
+      console.log(xp_cutoff)
+      const recoverable = target_scores.map((row) => {
+        const recoverable_rp = Math.max(row.target_rp - Math.max(row.current_rp, rp_cutoff), 0)
+        const recoverable_xp = (row.meter in xp_hand_size) ? Math.max(row.target_xp - Math.max(row.current_xp, xp_cutoff[row.meter]), 0) : 0
+        const recoverable_tp = recoverable_rp + recoverable_xp
+
+        return {
+          key: row.key,
+          title: row.title,
+          meter: row.meter,
+          score: row.score,
+          style: row.style,
+          spice: row.spice,
+          value: row.value,
+          quality: row.quality,
+          plays: row.plays,
+          current_rp: row.current_rp,
+          current_xp: row.current_xp,
+          target_score: row.target_score,
+          target_rp: row.target_rp,
+          target_xp: row.target_xp,
+          recoverable_rp: recoverable_rp,
+          recoverable_xp: recoverable_xp,
+          recoverable_tp: recoverable_tp
+        }
+      })
+
+      // ex_target = np.clip((np.power(2, p_spices - predicted_quality)) * (catalog.perfect_offset + 1), a_min=0, a_max=1)
+
+      setTableData(Object.values(recoverable).map((row) => ({
+        key: row.key,
         title: row.title,
         spice: row.spice,
         quality: row.quality,
-        pvs: row.value / Math.pow(2, row.spice),
-        targetScore: faker.number.float({min: 0.9, max: 1.0}),
-        recoverableTP: Math.max(0, faker.number.float({min: -100, max: 1000})),
-        recoverableRP: Math.max(0, faker.number.float({min: -200, max: 1000})),
-        recoverableXP: Math.max(0, faker.number.float({min: -300, max: 1000})),
+        //pvs: row.value / Math.pow(2, row.spice),
+        currentScore: row.score,
+        targetScore: row.target_score,
+        recoverableTP: row.recoverable_tp,
+        recoverableRP: row.recoverable_rp,
+        recoverableXP: row.recoverable_xp,
       })))
+      setRecoverability(recoverable)
     }
   }
 
@@ -515,9 +660,8 @@ export default function Home(initialized: boolean = false) {
 
   useEffect(() => {
     const updateCatalogData = async () => {
-      await updateSpiceData()
-      await updatePlayerNames()
-      setSelectedPlayerID(1)
+      updateSpiceData()
+      updatePlayerNames().then(() => (setSelectedPlayerID(1)))
     }
     updateCatalogData()
   }, [selectedCatalog])
@@ -527,77 +671,92 @@ export default function Home(initialized: boolean = false) {
       await updateScoreData()
     }
     updatePlayerData()
-  }, [selectedPlayerID])
+  }, [selectedPlayerID, fitAlgorithm, styleFilter])
 
 
   return (
-    <main className="grid grid-cols-3 gap-2">
+    <main className="grid grid-cols-4 gap-2 text-center">
       <div>
-        <Space wrap>
-          <Select
-            defaultValue="ITL2024"
-            options={[
-              {value: "ITL2024", label: "ITL2024"},
-              {value: "ITL2023", label: "ITL2023"},
-              {value: "SMX", label: "StepManiaX"},
-            ]}
-            value={selectedCatalog}
-            onChange={e => setSelectedCatalog(e)}
-          />
-        </Space>
+        <Select
+          style={{width: "90%"}}
+          defaultValue="ITL2024"
+          options={[
+            {value: "ITL2024", label: "ITL2024"},
+            {value: "ITL2023", label: "ITL2023"},
+            {value: "SMX", label: "StepManiaX"},
+          ]}
+          value={selectedCatalog}
+          onChange={e => setSelectedCatalog(e)}
+        />
       </div>
       <div>
-        <Space wrap>
-          <Select
-            defaultValue={1}
-            options={[...playerData]}
-            value={selectedPlayerID}
-            onChange={e => setSelectedPlayerID(e)}
-          />
-        </Space>
+        <Select
+          style={{width: "90%"}}
+          defaultValue={1}
+          options={[...playerData]}
+          value={selectedPlayerID}
+          onChange={e => setSelectedPlayerID(e)}
+        />
       </div>
       <div>
-        <Switch checkedChildren="Single" unCheckedChildren="Double" defaultChecked />
+        <Switch
+          style={{width: "90%"}}
+          checkedChildren="Single"
+          unCheckedChildren="Double"
+          value={styleFilter}
+          onChange={setStyleFilter}
+          defaultChecked
+        />
+      </div>
+      <div>
+        <Switch
+          style={{width: "90%"}}
+          checkedChildren="scobility v2024"
+          unCheckedChildren="scobility v2023"
+          value={fitAlgorithm}
+          onChange={setFitAlgorithm}
+          defaultChecked
+        />
       </div>
 
-      <div>
-        Scobility rating...
+      <div className="col-span-2">
+        Scobility
       </div>
       <div className="col-span-2">
-        Best Fits
+        Stats
       </div>
 
-      <div className="row-span-3 text-4xl">
+      <div className="col-span-2 row-span-2 text-4xl">
         {scobilityStats.tourney_power >= 0 ? scobilityStats.tourney_power.toFixed(3) : "🌶️🌶️"}🌶️
       </div>
+
       <div>
-        mild
+        {fitAlgorithm ?
+          "mild sauce slope: " + (scobilityStats.coefs.cut_point >= 0 ? scobilityStats.coefs.mild_slope.toFixed(3) : "🌶️") :
+          "timing power: "
+        }
       </div>
       <div>
-        {scobilityStats.coefs.cut_point >= 0 ?
-          "M(s) = " + scobilityStats.coefs.mild_slope.toFixed(3) + "(s - " + scobilityStats.coefs.unga.toFixed(3) + ") + " + scobilityStats.coefs.bunga.toFixed(3) :
-          "M(s) = 🌶️(s - 🌶️) + 🌶️"}
+        {fitAlgorithm ?
+          "spice frontier: " + (scobilityStats.coefs.cut_point >= 0 ? scobilityStats.coefs.unga.toFixed(3) : "🌶️") :
+          (scobilityStats.coefs.cut_point >= 0 ? scobilityStats.coefs.bunga.toFixed(3) : "🌶️")
+        }
       </div>
 
       <div>
-        hot
+        {fitAlgorithm ?
+          "hot sauce slope: " + (scobilityStats.coefs.cut_point >= 0 ? scobilityStats.coefs.hot_slope.toFixed(3) : "🌶️") :
+          "spice tolerance: "
+        }
       </div>
       <div>
-        {scobilityStats.coefs.cut_point >= 0 ?
-          "H(s) = " + scobilityStats.coefs.hot_slope.toFixed(3) + "(s - " + scobilityStats.coefs.unga.toFixed(3) + ") + " + scobilityStats.coefs.bunga.toFixed(3) :
-          "H(s) = 🌶️(s - 🌶️) + 🌶️"}
+        {fitAlgorithm ?
+          "spice resistance: " + (scobilityStats.coefs.cut_point >= 0 ? scobilityStats.coefs.bunga.toFixed(3) : "🌶️") :
+          (scobilityStats.coefs.cut_point >= 0 ? scobilityStats.coefs.hot_slope.toFixed(3) : "🌶️")
+        }
       </div>
 
-      <div>
-        unga bunga knee
-      </div>
-      <div>
-        {scobilityStats.coefs.cut_point >= 0 ?
-          "(" + scobilityStats.coefs.unga.toFixed(3) + ", " + scobilityStats.coefs.bunga.toFixed(3) + ")" :
-          "(🌶️, 🌶️)"}
-      </div>
-
-      <div className="col-span-3">
+      <div className="col-span-4">
         <Chart
           type="bubble"
           options={graphOptions}
@@ -606,7 +765,7 @@ export default function Home(initialized: boolean = false) {
         />
       </div>
 
-      <div className="col-span-3">
+      <div className="col-span-4">
         <Table
           columns={columns}
           dataSource={[...tableData]}
