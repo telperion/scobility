@@ -1302,5 +1302,5 @@ def process(src='itl2024', force_recalculate_spice: bool = False):
 
 
 if __name__ == '__main__':
-    process(src='itl2024', force_recalculate_spice=False)
+    process(src='itl2024', force_recalculate_spice=True)
     

@@ -3,6 +3,7 @@ import logging
 import os
 import json
 from datetime import datetime as dt
+from time import sleep
 
 tourney = 'itl2024'
 
@@ -37,6 +38,7 @@ def scrape_charts(path_dst: str):
     charts = {}
     strikes = []
     for i in range(10000):
+        sleep(1)
         try:
             r = requests.get(f'https://{tourney}.groovestats.com/api/chart/{i}')
             j = r.json()
@@ -66,6 +68,7 @@ def scrape_entrants(path_dst: str):
     entrants = {}
     strikes = []
     for i in range(10000):
+        sleep(1)
         try:
             r = requests.get(f'https://{tourney}.groovestats.com/api/entrant/{i}')
             j = r.json()
@@ -107,6 +110,7 @@ def scrape_scores(path_dst: str):
         i = c.get('id', 0)
 
         for retries in range(5):
+            sleep(1)
             try:
                 r = requests.post(
                     f'https://{tourney}.groovestats.com/api/score/chartTopScores',

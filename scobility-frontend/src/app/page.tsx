@@ -132,9 +132,9 @@ interface DataType {
   quality: number;
   currentScore: number;
   targetScore: number;
+  recoverableSP: number;
+  recoverableEP: number;
   recoverableTP: number;
-  recoverableRP: number;
-  recoverableXP: number;
 }
 
 const columns: TableColumnsType<DataType> = [
@@ -143,7 +143,6 @@ const columns: TableColumnsType<DataType> = [
     dataIndex: 'title',
     showSorterTooltip: { target: 'full-header' },
     sorter: (a, b) => a.title.localeCompare(b.title),
-    defaultSortOrder: 'ascend',
     sortDirections: ['ascend', 'descend'],
   },
   {
@@ -173,12 +172,69 @@ const columns: TableColumnsType<DataType> = [
     sorter: (a, b) => a.targetScore - b.targetScore,
     render: (v) => (v !== null ? ((100 * v).toFixed(2)).toString() + "%" : "n/a"),
     sortDirections: ['ascend', 'descend'],
+    filters: [
+      {
+        text: 'raises only',
+        value: 'raisesOnly',
+      },
+    ],
+    onFilter: (value, record) => (value === "raisesOnly") ? record.targetScore > record.currentScore : true,
+  },
+  {
+    title: 'SP',
+    dataIndex: 'currentSP',
+    sorter: (a, b) => a.currentSP - b.currentSP,
+    render: (v) => (v !== null ? parseInt(v) : "n/a"),
+    sortDirections: ['ascend', 'descend'],
+  },
+  {
+    title: 'SP 🆙',
+    dataIndex: 'recoverableSP',
+    sorter: (a, b) => a.recoverableSP - b.recoverableSP,
+    render: (v) => (v !== null ? parseInt(v) : "n/a"),
+    sortDirections: ['ascend', 'descend'],
+    filters: [
+      {
+        text: '+ only',
+        value: 'posOnly',
+      },
+    ],
+    onFilter: (value, record) => (value === "posOnly") ? record.recoverableSP > 0 : true,
+  },
+  {
+    title: 'EP 🏆',
+    dataIndex: 'currentEP',
+    sorter: (a, b) => a.currentEP - b.currentEP,
+    render: (v) => (v !== null ? parseInt(v) : "n/a"),
+    sortDirections: ['ascend', 'descend'],
+  },
+  {
+    title: 'EP 🆙',
+    dataIndex: 'recoverableEP',
+    sorter: (a, b) => a.recoverableEP - b.recoverableEP,
+    render: (v) => (v !== null ? parseInt(v) : "n/a"),
+    sortDirections: ['ascend', 'descend'],
+    filters: [
+      {
+        text: '+ only',
+        value: 'posOnly',
+      },
+    ],
+    onFilter: (value, record) => (value === "posOnly") ? record.recoverableEP > 0 : true,
+  },
+  {
+    title: 'TP 🏆',
+    dataIndex: 'currentTP',
+    sorter: (a, b) => a.currentTP - b.currentTP,
+    render: (v) => (v !== null ? parseInt(v) : "n/a"),
+    sortDirections: ['ascend', 'descend'],
   },
   {
     title: 'TP 🆙',
     dataIndex: 'recoverableTP',
     sorter: (a, b) => a.recoverableTP - b.recoverableTP,
     render: (v) => (v !== null ? parseInt(v) : "n/a"),
+    defaultSortOrder: 'descend',
     sortDirections: ['ascend', 'descend'],
     filters: [
       {
@@ -186,36 +242,9 @@ const columns: TableColumnsType<DataType> = [
         value: 'posOnly',
       },
     ],
+    defaultFilteredValue: ['posOnly'],
     onFilter: (value, record) => (value === "posOnly") ? record.recoverableTP > 0 : true,
   },
-  {
-    title: 'RP 🆙',
-    dataIndex: 'recoverableRP',
-    sorter: (a, b) => a.recoverableRP - b.recoverableRP,
-    render: (v) => (v !== null ? parseInt(v) : "n/a"),
-    sortDirections: ['ascend', 'descend'],
-    filters: [
-      {
-        text: '+ only',
-        value: 'posOnly',
-      },
-    ],
-    onFilter: (value, record) => (value === "posOnly") ? record.recoverableRP > 0 : true,
-  },
-  {
-    title: 'XP 🆙',
-    dataIndex: 'recoverableXP',
-    sorter: (a, b) => a.recoverableXP - b.recoverableXP,
-    render: (v) => (v !== null ? parseInt(v) : "n/a"),
-    sortDirections: ['ascend', 'descend'],
-    filters: [
-      {
-        text: '+ only',
-        value: 'posOnly',
-      },
-    ],
-    onFilter: (value, record) => (value === "posOnly") ? record.recoverableXP > 0 : true,
-  }
 ];
 
 const initialTableData = Array(100).fill(0).map((_, i) =>
@@ -226,9 +255,12 @@ const initialTableData = Array(100).fill(0).map((_, i) =>
     quality: faker.number.float({min: 0, max: 10}),
     currentScore: faker.number.float({min: 0.9, max: 1.0}),
     targetScore: faker.number.float({min: 0.9, max: 1.0}),
+    currentSP: Math.max(0, faker.number.float({min: -200, max: 1000})),
+    recoverableSP: Math.max(0, faker.number.float({min: -200, max: 1000})),
+    currentEP: Math.max(0, faker.number.float({min: -300, max: 1000})),
+    recoverableEP: Math.max(0, faker.number.float({min: -300, max: 1000})),
+    currentTP: Math.max(0, faker.number.float({min: -100, max: 1000})),
     recoverableTP: Math.max(0, faker.number.float({min: -100, max: 1000})),
-    recoverableRP: Math.max(0, faker.number.float({min: -200, max: 1000})),
-    recoverableXP: Math.max(0, faker.number.float({min: -300, max: 1000})),
   })
 );
 
@@ -245,6 +277,47 @@ const initialScobilityStats = {
     mild_slope: -1,
     hot_slope: -1,
     residual: -1,
+  }
+}
+
+const describeUngaBunga = (coefs) => {
+  let description = {
+    unga: "",
+    bunga: "",
+    strategy: "",
+  }
+
+  if (coefs.mild_slope < 0) {
+    if (coefs.hot_slope < 0) {
+      return {
+        unga: "spice cliff: ",
+        bunga: "spice tolerance: ",
+        strategy: "Choose spicier charts than you normally play.",
+      }
+    }
+    else {
+      return {
+        unga: "spice frontier: ",
+        bunga: "spice tolerance: ",
+        strategy: "Train charts with a spice rating around " + coefs.unga.toFixed(3) + "🌶️.",
+      }
+    }
+  }
+  else {
+    if (coefs.hot_slope < 0) {
+      return {
+        unga: "spice frontier: ",
+        bunga: "spice affinity: ",
+        strategy: "Train mild precision or spicy tolerance.",
+      }
+    }
+    else {
+      return {
+        unga: "spice cliff: ",
+        bunga: "spice affinity: ",
+        strategy: "Train precise timing on mild charts.",
+      }
+    }
   }
 }
 
@@ -285,12 +358,15 @@ export default function Home(initialized: boolean = false) {
       return null
     }
 
+    // HACK?
+    const true_style = row.chart_id > 400 ? "dance-double" : "dance-single"
+
     return {
       key: row.chart_id,
-      title: {"dance-single": "[S", "dance-double": "[D"}[chart_info.style] + chart_info.meter.toString() + "] " + chart_info.title,
+      title: {"dance-single": "[S", "dance-double": "[D"}[true_style] + chart_info.meter.toString().padStart(2, "0") + "] " + chart_info.title,
       meter: chart_info.meter,
       score: row.score,
-      style: chart_info.style,
+      style: true_style,
       spice: Math.log2(chart_info.spice),
       value: chart_info.value,
       quality: Math.log2(chart_info.spice) - Math.log2(1.003 - row.score),
@@ -463,19 +539,19 @@ export default function Home(initialized: boolean = false) {
   const log_base = 1.1032889141348
   const pow_base = 61
   const inflect = 50
-  const expct_to_rppct = (expct: number) => {
+  const expct_to_sppct = (expct: number) => {
     const v_lo = (expct < 50) ? expct : 50
     const v_hi = (expct > 50) ? expct : 50
 
     return Math.log(v_lo + 1) / Math.log(log_base) + Math.pow(pow_base, (v_hi-inflect)/(100-inflect)) - 1
   }
-  const rppct_to_expct = (rppct: number) => {
+  const sppct_to_expct = (sppct: number) => {
     const piecewise_border = Math.log(inflect + 1)/Math.log(log_base) - 1
-    if (rppct < piecewise_border) {
-      return Math.pow(log_base, rppct) - 1
+    if (sppct < piecewise_border) {
+      return Math.pow(log_base, sppct) - 1
     }
     else {
-      return (100-inflect)*Math.log(rppct - piecewise_border)/Math.log(pow_base) + inflect
+      return (100-inflect)*Math.log(sppct - piecewise_border)/Math.log(pow_base) + inflect
     }
   }
 
@@ -564,10 +640,10 @@ export default function Home(initialized: boolean = false) {
         // TODO: double-check this math
         const target_missing_ex = 1.003 - Math.pow(2, row.spice - temp_scobility_stats.quality_fit(row.spice))
         const target_score = ((target_missing_ex < 0) ? 0 : (target_missing_ex > 1) ? 1 : target_missing_ex)
-        const target_rp = Math.round(expct_to_rppct(target_score * 100) * row.value / 100)
-        const current_rp = Math.round(expct_to_rppct(row.score * 100) * row.value / 100)
-        const target_xp = Math.round(expct_curve(target_score * 100))
-        const current_xp = Math.round(expct_curve(row.score * 100))
+        const target_sp = target_score > 0.99999 ? row.value : Math.floor(expct_to_sppct(target_score * 100) * row.value / 100)
+        const current_sp = row.score > 0.99999 ? row.value : Math.floor(expct_to_sppct(row.score * 100) * row.value / 100)
+        const target_ep = target_score > 0.99999 ? 1000 : Math.floor(expct_curve(target_score * 100))
+        const current_ep = row.score > 0.99999 ? 1000 : Math.floor(expct_curve(row.score * 100))
 
         return {
           key: row.key,
@@ -579,33 +655,39 @@ export default function Home(initialized: boolean = false) {
           value: row.value,
           quality: row.quality,
           plays: row.plays,
-          current_rp: current_rp,
-          current_xp: current_xp,
+          current_sp: current_sp,
+          current_ep: current_ep,
           target_score: target_score,
-          target_rp: target_rp,
-          target_xp: target_xp,
+          target_sp: target_sp,
+          target_ep: target_ep,
         }
       })
-      const ranked_by_current_rp = target_scores.sort((a, b) => (b.current_rp - a.current_rp)) // descending order
-      const rp_hand_size = (styleFilter ? 75 : 50)  // 75 for single, 50 for double
-      const rp_cutoff = (target_scores.length < rp_hand_size) ? 0 : target_scores[rp_hand_size-1].current_rp // has to replace something
-      const ranked_by_current_xp = target_scores.sort((a, b) => (b.current_xp - a.current_xp)) // descending order
-      const xp_hand_size = {7: 1, 8: 2, 9: 3, 10: 4, 11: 4, 12: 3, 13: 2, 14: 1}
-      const xp_contenders = Object.fromEntries(Object.keys(xp_hand_size).map((key) => [key, []]))
-      for (let row of ranked_by_current_xp) {
-        if (row.meter in xp_hand_size) {
-          if (xp_contenders[row.meter].length < xp_hand_size[row.meter]) {
-            xp_contenders[row.meter].push(row.score)
+      const ranked_by_current_sp = target_scores.toSorted((a, b) => (b.current_sp - a.current_sp)) // descending order
+      const sp_hand_size = (styleFilter ? 75 : 50)  // 75 for single, 50 for double
+      const sp_cutoff = (ranked_by_current_sp.length < sp_hand_size) ? 0 : ranked_by_current_sp[sp_hand_size-1].current_sp // has to replace something
+      const sp_representatives = ranked_by_current_sp.slice(0, sp_hand_size).map((row) => (row.key))
+      const ranked_by_current_ep = target_scores.toSorted((a, b) => (b.current_ep - a.current_ep)) // descending order
+      console.log(ranked_by_current_sp)
+      console.log(sp_representatives)
+      console.log(ranked_by_current_ep)
+      const ep_hand_size = {7: 1, 8: 2, 9: 3, 10: 4, 11: 4, 12: 3, 13: 2, 14: 1}
+      const ep_contenders = Object.fromEntries(Object.keys(ep_hand_size).map((key) => [key, []]))
+      for (let row of ranked_by_current_ep) {
+        if (row.meter in ep_hand_size) {
+          if (ep_contenders[row.meter].length < ep_hand_size[row.meter]) {
+            ep_contenders[row.meter].push(row)
           }
         }
       }
-      console.log(xp_contenders)
-      const xp_cutoff = Object.fromEntries(Object.keys(xp_hand_size).map((k) => [k, (xp_contenders[k].length < xp_hand_size[k]) ? 0 : expct_curve(xp_contenders[k][xp_hand_size[k]-1] * 100)]))
-      console.log(xp_cutoff)
+      console.log(ep_contenders)
+      const ep_cutoff = Object.fromEntries(Object.keys(ep_hand_size).map((k) => [k, (ep_contenders[k].length < ep_hand_size[k]) ? 0 : expct_curve(ep_contenders[k][ep_hand_size[k]-1].score * 100)]))
       const recoverable = target_scores.map((row) => {
-        const recoverable_rp = Math.max(row.target_rp - Math.max(row.current_rp, rp_cutoff), 0)
-        const recoverable_xp = (row.meter in xp_hand_size) ? Math.max(row.target_xp - Math.max(row.current_xp, xp_cutoff[row.meter]), 0) : 0
-        const recoverable_tp = recoverable_rp + recoverable_xp
+        const contributing_sp = sp_representatives.includes(row.key) ? row.current_sp : 0
+        const contributing_ep = ((row.meter in ep_contenders) && (ep_contenders[row.meter].map((r) => (r.key)).includes(row.key))) ? row.current_ep : 0
+        const contributing_tp = contributing_sp + contributing_ep
+        const recoverable_sp = Math.max(row.target_sp - Math.max(row.current_sp, sp_cutoff), 0)
+        const recoverable_ep = (row.meter in ep_hand_size) ? Math.max(row.target_ep - Math.max(row.current_ep, ep_cutoff[row.meter]), 0) : 0
+        const recoverable_tp = recoverable_sp + recoverable_ep
 
         return {
           key: row.key,
@@ -617,13 +699,14 @@ export default function Home(initialized: boolean = false) {
           value: row.value,
           quality: row.quality,
           plays: row.plays,
-          current_rp: row.current_rp,
-          current_xp: row.current_xp,
+          current_sp: row.current_sp,
+          current_ep: contributing_ep,
+          current_tp: contributing_tp,
           target_score: row.target_score,
-          target_rp: row.target_rp,
-          target_xp: row.target_xp,
-          recoverable_rp: recoverable_rp,
-          recoverable_xp: recoverable_xp,
+          target_sp: row.target_sp,
+          target_ep: row.target_ep,
+          recoverable_sp: recoverable_sp,
+          recoverable_ep: recoverable_ep,
           recoverable_tp: recoverable_tp
         }
       })
@@ -638,11 +721,15 @@ export default function Home(initialized: boolean = false) {
         //pvs: row.value / Math.pow(2, row.spice),
         currentScore: row.score,
         targetScore: row.target_score,
+        currentSP: row.current_sp,
+        recoverableSP: row.recoverable_sp,
+        currentEP: row.current_ep,
+        recoverableEP: row.recoverable_ep,
+        currentTP: row.current_tp,
         recoverableTP: row.recoverable_tp,
-        recoverableRP: row.recoverable_rp,
-        recoverableXP: row.recoverable_xp,
       })))
       setRecoverability(recoverable)
+      console.log(recoverable)
     }
   }
 
@@ -683,7 +770,6 @@ export default function Home(initialized: boolean = false) {
           options={[
             {value: "ITL2024", label: "ITL2024"},
             {value: "ITL2023", label: "ITL2023"},
-            {value: "SMX", label: "StepManiaX"},
           ]}
           value={selectedCatalog}
           onChange={e => setSelectedCatalog(e)}
@@ -726,7 +812,7 @@ export default function Home(initialized: boolean = false) {
         Stats
       </div>
 
-      <div className="col-span-2 row-span-2 text-4xl">
+      <div className="col-span-2 row-span-3 text-4xl">
         {scobilityStats.tourney_power >= 0 ? scobilityStats.tourney_power.toFixed(3) : "🌶️🌶️"}🌶️
       </div>
 
@@ -738,7 +824,7 @@ export default function Home(initialized: boolean = false) {
       </div>
       <div>
         {fitAlgorithm ?
-          "spice frontier: " + (scobilityStats.coefs.cut_point >= 0 ? scobilityStats.coefs.unga.toFixed(3) : "🌶️") :
+          (scobilityStats.coefs.cut_point >= 0 ? describeUngaBunga(scobilityStats.coefs).unga + scobilityStats.coefs.unga.toFixed(3) : "inflection spice: 🌶️") :
           (scobilityStats.coefs.cut_point >= 0 ? scobilityStats.coefs.bunga.toFixed(3) : "🌶️")
         }
       </div>
@@ -751,8 +837,15 @@ export default function Home(initialized: boolean = false) {
       </div>
       <div>
         {fitAlgorithm ?
-          "spice resistance: " + (scobilityStats.coefs.cut_point >= 0 ? scobilityStats.coefs.bunga.toFixed(3) : "🌶️") :
+          (scobilityStats.coefs.cut_point >= 0 ?describeUngaBunga(scobilityStats.coefs).bunga + scobilityStats.coefs.bunga.toFixed(3) : "inflection quality: 🌶️") :
           (scobilityStats.coefs.cut_point >= 0 ? scobilityStats.coefs.hot_slope.toFixed(3) : "🌶️")
+        }
+      </div>
+
+      <div className="col-span-2">
+        {fitAlgorithm ?
+          (scobilityStats.coefs.cut_point >= 0 ? describeUngaBunga(scobilityStats.coefs).strategy : "General recommendation... 🌶️🌶️🌶️") :
+          (scobilityStats.coefs.cut_point >= 0 ? ((scobilityStats.coefs.hot_slope < 0) ? "Train spice tolerance." : "Train precise timing.") : "General recommendation... 🌶️🌶️🌶️")
         }
       </div>
 
