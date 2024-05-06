@@ -762,19 +762,7 @@ export default function Home(initialized: boolean = false) {
 
 
   return (
-    <main className="grid grid-cols-4 gap-2 text-center">
-      <div>
-        <Select
-          style={{width: "90%"}}
-          defaultValue="ITL2024"
-          options={[
-            {value: "ITL2024", label: "ITL2024"},
-            {value: "ITL2023", label: "ITL2023"},
-          ]}
-          value={selectedCatalog}
-          onChange={e => setSelectedCatalog(e)}
-        />
-      </div>
+    <main className="grid grid-cols-3 gap-2 text-center">
       <div>
         <Select
           style={{width: "90%"}}
@@ -805,14 +793,14 @@ export default function Home(initialized: boolean = false) {
         />
       </div>
 
-      <div className="col-span-2">
+      <div>
         Scobility
       </div>
       <div className="col-span-2">
         Stats
       </div>
 
-      <div className="col-span-2 row-span-3 text-4xl">
+      <div className="row-span-3 text-5xl">
         {scobilityStats.tourney_power >= 0 ? scobilityStats.tourney_power.toFixed(3) : "🌶️🌶️"}🌶️
       </div>
 
@@ -849,7 +837,7 @@ export default function Home(initialized: boolean = false) {
         }
       </div>
 
-      <div className="col-span-4">
+      <div className="col-span-3">
         <Chart
           type="bubble"
           options={graphOptions}
@@ -858,7 +846,7 @@ export default function Home(initialized: boolean = false) {
         />
       </div>
 
-      <div className="col-span-4">
+      <div className="col-span-3">
         <Table
           columns={columns}
           dataSource={[...tableData]}
