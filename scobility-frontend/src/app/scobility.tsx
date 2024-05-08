@@ -1,13 +1,15 @@
-import { useState, useEffect } from "react";
-
 import fetch from "node-fetch";
 
+// Internal spice calculation parameter that also plays a part in
+// achievable score predictions
+const perfect_offset = 1.003
+
 class ScobilityCoefficients {
-  version: number = 2024;
+  version: number = 2024.5;
   cut_point: number = -1;
   timing_power: number = -1;
-  unga: number = -1;
-  bunga: number = -1;
+  horizon_spice: number = -1;
+  horizon_quality: number = -1;
   mild_slope: number = -1;
   hot_slope: number = -1;
   residual: number = -1;
@@ -28,7 +30,7 @@ class ScobilityCoefficients {
   describeMild() {
     // Need to distinguish between v2023 and v2024 for this coefficient.
     let readableName = "mild sauce: ";
-    if (this.version == 2023) {
+    if (this.version < 2024) {
       readableName = "spice tolerance: ";
     }
 
@@ -40,7 +42,7 @@ class ScobilityCoefficients {
   }
 
   describeHot() {
-    if (this.version == 2023) {
+    if (this.version < 2024) {
       // v2023 only has one slope coefficient and it's not this one.
       return "(2023 version)";
     }
@@ -52,17 +54,17 @@ class ScobilityCoefficients {
     );
   }
 
-  describeUngaBunga() {
-    if (this.version == 2023) {
+  describeSpiceHorizon() {
+    if (this.version < 2024) {
       // v2023 doesn't have an inflection point.
       return "(2023 version)";
     }
 
     return (
       "spice horizon: (" +
-      (this.valid() ? this.unga.toFixed(3) : "❓") +
+      (this.valid() ? this.horizon_spice.toFixed(3) : "❓") +
       " 🌶️, " +
-      (this.valid() ? this.bunga.toFixed(3) : "❓") +
+      (this.valid() ? this.horizon_quality.toFixed(3) : "❓") +
       " ✨)"
     );
   }
@@ -72,7 +74,7 @@ class ScobilityCoefficients {
       return "🌶️🌶️🌶️";
     }
 
-    if (this.version == 2023) {
+    if (this.version < 2024) {
       if (this.hot_slope < 0) {
         return "Train spice tolerance.";
       } else {
@@ -86,13 +88,13 @@ class ScobilityCoefficients {
       } else {
         return (
           "Train charts with a spice rating around " +
-          this.unga.toFixed(3) +
+          this.horizon_spice.toFixed(3) +
           "🌶️."
         );
       }
     } else {
       if (this.hot_slope < 0) {
-        ("Train mild precision or spicy tolerance.");
+        return "Train mild precision or spicy tolerance.";
       } else {
         return "Train precise timing on mild charts.";
       }
@@ -109,7 +111,7 @@ class ScobilityStats {
 export interface LoadedPlayer {
   entrant_id: bigint;
   name: string;
-  scobility_calc_time: Date;
+  scobility_calc_time: Date | string;
 }
 
 export interface LoadedChart {
@@ -125,7 +127,7 @@ export interface LoadedChart {
   style: string | number;
   value: number;
   spice: number;
-  spice_calc_time: Date;
+  spice_calc_time: Date | string;
 }
 
 export interface LoadedScore {
@@ -135,7 +137,7 @@ export interface LoadedScore {
   hash: string;
   score: number;
   plays: number;
-  last_played: Date;
+  last_played: Date | string;
 }
 
 export interface ProcessedScore {
@@ -267,7 +269,7 @@ function transformLoadedScore(
     return null;
   }
 
-  // HACK?
+  // HACK? my dumbass didn't populate this field correctly in the database
   const true_style = row.chart_id > 400 ? "dance-double" : "dance-single";
 
   return {
@@ -276,15 +278,15 @@ function transformLoadedScore(
       { "dance-single": "[S", "dance-double": "[D" }[true_style] +
       chart_info.meter.toString().padStart(2, "0") +
       "] " +
-      chart_info.title,
+      chart_info.title, // e.g. [S08] I Can't Stop Me
     meter: chart_info.meter,
     score: row.score,
     style: true_style,
     spice: Math.log2(chart_info.spice),
     value: chart_info.value,
-    quality: Math.log2(chart_info.spice) - Math.log2(1.003 - row.score),
+    quality: Math.log2(chart_info.spice) - Math.log2(perfect_offset - row.score),
     plays: row.plays,
-    last_played: row.last_played,
+    last_played: typeof(row.last_played) == "string" ? new Date(row.last_played) : row.last_played,
     current_sp: 0,
     current_ep: 0,
     current_rp: 0,
@@ -300,7 +302,7 @@ function transformLoadedScore(
 }
 
 function filterScores(
-  score_data: ProcessedScore[],
+  score_data: (ProcessedScore | null)[],
   style_filter: string = "dance-single"
 ) {
   return score_data
@@ -328,6 +330,7 @@ const dumbass_least_squares_components = (
 };
 
 const dumbass_least_squares_free = (a: Array<number>, b: Array<number>) => {
+  // Plain ol' unanchored least squares best-fit.
   const components = dumbass_least_squares_components(a, b);
   const det = components.ones * components.s2 - components.s * components.s;
   const c1 =
@@ -347,20 +350,22 @@ const dumbass_least_squares_with_cut_point = (
   b: Array<number>,
   anchor: number
 ): ScobilityCoefficients => {
+  // Plain' ol unanchored least squares best-fit
+  // (but there's two of them!)
   const a_l = a.slice(0, anchor);
   const a_r = a.slice(anchor);
   const b_l = b.slice(0, anchor);
   const b_r = b.slice(anchor);
   const lsq_l = dumbass_least_squares_free(a_l, b_l);
   const lsq_r = dumbass_least_squares_free(a_r, b_r);
-  const unga = (lsq_r.c1 - lsq_l.c1) / (lsq_l.c0 - lsq_r.c0);
-  const bunga = lsq_l.c1 * unga + lsq_l.c0;
-  const timing_power = unga > 0 ? lsq_l.c0 : lsq_r.c0;
+  const horizon_spice = (lsq_r.c1 - lsq_l.c1) / (lsq_l.c0 - lsq_r.c0);
+  const horizon_quality = lsq_l.c1 * horizon_spice + lsq_l.c0;
+  const timing_power = horizon_spice > 0 ? lsq_l.c0 : lsq_r.c0;
   return Object.assign(new ScobilityCoefficients(), {
     cut_point: anchor,
     timing_power: timing_power,
-    unga: unga,
-    bunga: bunga,
+    horizon_spice: horizon_spice,
+    horizon_quality: horizon_quality,
     mild_slope: lsq_l.c1,
     hot_slope: lsq_r.c1,
     residual: lsq_l.residual + lsq_r.residual,
@@ -383,6 +388,7 @@ const dumbass_least_squares_anchored = (
   const b_l = b.slice(0, anchor);
   const b_r = b.slice(anchor);
 
+  // Borrow some of the calculations from the naive least squares method.
   const comp_l = dumbass_least_squares_components(a_l, b_l);
   const comp_r = dumbass_least_squares_components(a_r, b_r);
   const ones = a.length;
@@ -402,6 +408,7 @@ const dumbass_least_squares_anchored = (
   // Equivalent formulation of determinant
   // const det = m11*comp_l.s2 + m13*comp_l.s
 
+  // Evaluate the two slopes and the X coordinate at the anchor.
   const c1_l = (m11 * comp_l.sq + m12 * comp_r.sq + m13 * q) / det;
   const c1_r = (m12 * comp_l.sq + m22 * comp_r.sq + m23 * q) / det;
   const c0 = (m13 * comp_l.sq + m23 * comp_r.sq + m33 * q) / det;
@@ -425,54 +432,61 @@ const dumbass_least_squares_anchored = (
 
 // Scobilitous piecewise least squares!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 // Unga bunga!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-const unga_bunga_fit = (a: Array<number>, b: Array<number>) => {
+const spice_horizon_fit = (a: Array<number>, b: Array<number>) => {
   // Requires independent variable to be sorted.
 
   let best_fit_so_far = new ScobilityCoefficients();
 
   // Don't unga bunga too close to the edges of the spice spread.
-  const knee_centering = Math.sqrt(a.length);
+  const horizon_centering = Math.sqrt(a.length);
 
   // Test the fitness of the piecewise linear approximation between each
   // pair of spice values.
   // Even in scobility we can have little a DP (dynamic programming),
   // as a treat
-
   for (let i in Array(a.length)
     .fill(0)
     .map((e, i) => i)) {
     const j = parseInt(i);
 
-    if (j < knee_centering || j >= a.length - knee_centering) {
+    if (j < horizon_centering || j >= a.length - horizon_centering) {
       continue;
     }
 
-    // const best_fit_here_naive = dumbass_least_squares_with_cut_point(a, b, j)
-    // let best_fit_here = best_fit_here_naive
-    // if (best_fit_here.unga < a[j] || best_fit_here.unga > a[j+1]) {
-    let best_fit_here = new ScobilityCoefficients();
-    const best_fit_here_l = dumbass_least_squares_anchored(a, b, j);
-    const best_fit_here_r = dumbass_least_squares_anchored(a, b, j + 1);
-    if (best_fit_here_l.residual < best_fit_here_r.residual) {
-      best_fit_here = Object.assign(new ScobilityCoefficients(), {
-        cut_point: j,
-        unga: a[j],
-        bunga: best_fit_here_l.c0,
-        mild_slope: best_fit_here_l.c1_l,
-        hot_slope: best_fit_here_l.c1_r,
-        timing_power: best_fit_here_l.c0 - best_fit_here_l.c1_l * a[j],
-        residual: best_fit_here_l.residual,
-      });
-    } else {
-      best_fit_here = Object.assign(new ScobilityCoefficients(), {
-        cut_point: j,
-        unga: a[j + 1],
-        bunga: best_fit_here_r.c0,
-        mild_slope: best_fit_here_r.c1_l,
-        hot_slope: best_fit_here_r.c1_r,
-        timing_power: best_fit_here_l.c0 - best_fit_here_l.c1_l * a[j],
-        residual: best_fit_here_r.residual,
-      });
+    // Try fitting an unanchored dual least squares first.
+    // If the intersection lands between this pair of spice values, it
+    // automatically wins the optimization for this step of the DP algorithm.
+    const best_fit_here_naive = dumbass_least_squares_with_cut_point(a, b, j)
+    let best_fit_here = best_fit_here_naive
+    if (best_fit_here.horizon_spice < a[j] || best_fit_here.horizon_spice > a[j+1]) {
+      // The intersection (a.k.a. spice horizon) didn't land between this
+      // pair of spice values, so it can't satisfy the optimization constraint.
+      // Let's evaluate what the best fits are on the boundaries and see which
+      // wins among those two.
+      best_fit_here = new ScobilityCoefficients();
+      const best_fit_here_l = dumbass_least_squares_anchored(a, b, j);
+      const best_fit_here_r = dumbass_least_squares_anchored(a, b, j + 1);
+      if (best_fit_here_l.residual < best_fit_here_r.residual) {
+        best_fit_here = Object.assign(new ScobilityCoefficients(), {
+          cut_point: j,
+          horizon_spice: a[j],
+          horizon_quality: best_fit_here_l.c0,
+          mild_slope: best_fit_here_l.c1_l,
+          hot_slope: best_fit_here_l.c1_r,
+          timing_power: best_fit_here_l.c0 - best_fit_here_l.c1_l * a[j],
+          residual: best_fit_here_l.residual,
+        });
+      } else {
+        best_fit_here = Object.assign(new ScobilityCoefficients(), {
+          cut_point: j,
+          horizon_spice: a[j + 1],
+          horizon_quality: best_fit_here_r.c0,
+          mild_slope: best_fit_here_r.c1_l,
+          hot_slope: best_fit_here_r.c1_r,
+          timing_power: best_fit_here_l.c0 - best_fit_here_l.c1_l * a[j],
+          residual: best_fit_here_r.residual,
+        });
+      }
     }
 
     if (
@@ -481,44 +495,47 @@ const unga_bunga_fit = (a: Array<number>, b: Array<number>) => {
     ) {
       best_fit_so_far = best_fit_here;
     }
-    // console.log(best_fit_here)
-    // console.log(best_fit_so_far)
   }
   return best_fit_so_far;
 };
 
-const log_base = 1.1032889141348;
-const pow_base = 61;
-const inflect = 50;
+// SP calculation functions for ITL2023/ITL2024
+const sp_log_base = 1.1032889141348;
+const sp_pow_base = 61;
+const sp_inflect = 50;
 const expct_to_sppct = (expct: number) => {
+  // EX % to SP %
   const v_lo = expct < 50 ? expct : 50;
   const v_hi = expct > 50 ? expct : 50;
 
   return (
-    Math.log(v_lo + 1) / Math.log(log_base) +
-    Math.pow(pow_base, (v_hi - inflect) / (100 - inflect)) -
+    Math.log(v_lo + 1) / Math.log(sp_log_base) +
+    Math.pow(sp_pow_base, (v_hi - sp_inflect) / (100 - sp_inflect)) -
     1
   );
 };
 const sppct_to_expct = (sppct: number) => {
-  const piecewise_border = Math.log(inflect + 1) / Math.log(log_base) - 1;
+  // SP % to EX %
+  const piecewise_border = Math.log(sp_inflect + 1) / Math.log(sp_log_base) - 1;
   if (sppct < piecewise_border) {
-    return Math.pow(log_base, sppct) - 1;
+    return Math.pow(sp_log_base, sppct) - 1;
   } else {
     return (
-      ((100 - inflect) * Math.log(sppct - piecewise_border)) /
-        Math.log(pow_base) +
-      inflect
+      ((100 - sp_inflect) * Math.log(sppct - piecewise_border)) /
+        Math.log(sp_pow_base) +
+      sp_inflect
     );
   }
 };
 
-const ep_cutoff = 85.0;
+// EP calculation function for ITL2024
+const ep_curve_cutoff = 85.0;
 const expct_curve = (expct: number) => {
+  // EX % to EP
   return (
     (Math.pow(
       100,
-      (expct < ep_cutoff ? 0 : expct - ep_cutoff) / (100.0 - ep_cutoff)
+      (expct < ep_curve_cutoff ? 0 : expct - ep_curve_cutoff) / (100.0 - ep_curve_cutoff)
     ) -
       1) *
     (1000.0 / 99.0)
@@ -527,34 +544,39 @@ const expct_curve = (expct: number) => {
 
 const calculateScobility = (
   score_data,
-  fit: boolean = true
+  fit_algorithm: boolean = true
 ): ScobilityStats => {
+  // List out spice and quality for each played chart.
   const spice_values = score_data.map((row) => row.spice);
   const quality_values = score_data.map((row) => row.quality);
 
+  // Tourney power rating (this is kinda spitballed I might adjust later)
   const tourney_power =
     0.5 * Math.log2(_sum(quality_values.map((v) => Math.pow(2, v * 2))));
-  if (fit) {
-    const coefs = unga_bunga_fit(spice_values, quality_values);
+
+  if (fit_algorithm) {
+    // scobility v2024
+    const coefs = spice_horizon_fit(spice_values, quality_values);
     return {
       tourney_power: tourney_power,
       coefs: coefs,
       quality_fit: (s: number) => {
-        if (s <= coefs.unga) {
-          return coefs.mild_slope * (s - coefs.unga) + coefs.bunga;
+        if (s <= coefs.horizon_spice) {
+          return coefs.mild_slope * (s - coefs.horizon_spice) + coefs.horizon_quality;
         } else {
-          return coefs.hot_slope * (s - coefs.unga) + coefs.bunga;
+          return coefs.hot_slope * (s - coefs.horizon_spice) + coefs.horizon_quality;
         }
       },
     };
   } else {
+    // scobility v2023 can still be calculated for comparison :)
     const coefs_line = dumbass_least_squares_free(spice_values, quality_values);
     const coefs = Object.assign(new ScobilityCoefficients(), {
       version: 2023,
       cut_point: 0,
       timing_power: coefs_line.c0,
-      unga: 0,
-      bunga: coefs_line.c0,
+      horizon_spice: 0,
+      horizon_quality: coefs_line.c0,
       mild_slope: coefs_line.c1,
       hot_slope: coefs_line.c1,
       residual: coefs_line.residual,
@@ -563,10 +585,10 @@ const calculateScobility = (
       tourney_power: tourney_power,
       coefs: coefs,
       quality_fit: (s: number) => {
-        if (s <= coefs.unga) {
-          return coefs.mild_slope * (s - coefs.unga) + coefs.bunga;
+        if (s <= coefs.horizon_spice) {
+          return coefs.mild_slope * (s - coefs.horizon_spice) + coefs.horizon_quality;
         } else {
-          return coefs.hot_slope * (s - coefs.unga) + coefs.bunga;
+          return coefs.hot_slope * (s - coefs.horizon_spice) + coefs.horizon_quality;
         }
       },
     };
@@ -597,7 +619,7 @@ function hydrateProcessedScores(
   for (let row of score_data) {
     // TODO: double-check this math
     const target_missing_ex =
-      1.003 - Math.pow(2, row.spice - scobility.quality_fit(row.spice));
+      perfect_offset - Math.pow(2, row.spice - scobility.quality_fit(row.spice));
     row.target_score =
       target_missing_ex < 0 ? 0 : target_missing_ex > 1 ? 1 : target_missing_ex;
     row.target_sp =
@@ -619,6 +641,10 @@ function hydrateProcessedScores(
   }
 
   // Understand which charts contribute SP and EP to the player's ranking points.
+  // If we're in the ITL2024 website ecosystem, probably easier to fill
+  // sp_contenders/ep_contenders and sp_cutoff/ep_cutoff directly
+  // rather than re-deriving here.
+
   // SP is easy - pull the top slice of current SP values.
   const sp_hand_size = sp_hand_size_map.get(style_filter) || 0;
   const ranked_by_current_sp = score_data.toSorted(
@@ -631,9 +657,9 @@ function hydrateProcessedScores(
   const sp_contenders = ranked_by_current_sp
     .slice(0, sp_hand_size)
     .map((row) => row.key);
-  console.log(ranked_by_current_sp);
-  console.log(sp_contenders);
-  console.log(sp_cutoff);
+  // console.log(ranked_by_current_sp);
+  // console.log(sp_contenders);
+  // console.log(sp_cutoff);
 
   // EP is a little more difficult - the chart's meter has an effect on whether the chart has the opportunity to contribute or not.
   const ranked_by_current_ep = score_data.toSorted(
@@ -654,15 +680,16 @@ function hydrateProcessedScores(
       }
     }
   }
-  console.log(ranked_by_current_ep);
-  console.log(ep_contenders);
-  console.log(ep_cutoff);
+  // console.log(ranked_by_current_ep);
+  // console.log(ep_contenders);
+  // console.log(ep_cutoff);
 
   let total_sp = 0
   let total_ep = 0
   let total_rp = 0
   let total_tp = 0
   for (let row of score_data) {
+    // Does this score currently contribute SP or EP to our total RP?
     row.contributes_sp = sp_contenders.includes(row.key);
     row.contributes_ep =
       row.meter in ep_contenders &&
@@ -671,6 +698,7 @@ function hydrateProcessedScores(
       (row.contributes_sp ? row.current_sp : 0) +
       (row.contributes_ep ? row.current_ep : 0);
 
+    // Would raising this score to scobility's prediction contribute (more) SP or EP to our total RP?
     row.recoverable_sp = Math.max(
       row.target_sp - Math.max(row.current_sp, sp_cutoff),
       0
@@ -683,6 +711,7 @@ function hydrateProcessedScores(
       : 0;
     row.recoverable_rp = row.recoverable_sp + row.recoverable_ep;
 
+    // "Checksums"
     total_sp += row.contributes_sp ? row.current_sp : 0
     total_ep += row.contributes_ep ? row.current_ep : 0
     total_rp += row.current_rp
