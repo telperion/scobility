@@ -1,3 +1,6 @@
+// scobility v2024.5
+// :chili_pepper:
+
 import fetch from "node-fetch";
 
 // Internal spice calculation parameter that also plays a part in
