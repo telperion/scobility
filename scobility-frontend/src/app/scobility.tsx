@@ -167,97 +167,83 @@ export interface ProcessedScore {
   recoverable_rp: number;
 }
 
-async function loadSpiceData<T>(catalog: string): Promise<T> {
+export interface ScobilityDBResponse<T> {
+  status: boolean;
+  data: Map<string, T>;
+  message: string;
+}
+
+async function loadSpiceData(catalog: string): Promise<ScobilityDBResponse<LoadedChart>> {
   return fetch(
     `https://scobility.azurewebsites.net/catalog/${catalog}/chart/all/detail/all`
   )
-    .then((response: Response) => {
+    .then((response) => {
       if (!response.ok) {
         throw new Error(response.statusText);
       }
-      return response.json() as Promise<T>;
+      return response.json() as Promise<ScobilityDBResponse<LoadedChart>>;
     })
-    .catch((error: Error) => console.error("Error loading spice data: ", error))
-    .then((data: T) => {
+    .catch((error: Error) => {
+      console.error("Error loading spice data: ", error);
+      return {} as ScobilityDBResponse<LoadedChart>;
+    })
+    .then((data: ScobilityDBResponse<LoadedChart>) => {
       data.data = new Map(Object.entries(data.data));
       return data;
     })
-    .catch((error: Error) =>
+    .catch((error: Error) => {
       console.error("Error converting spice data: ", error)
-    )
-    .then((data: T) => {
-      return data as {
-        status: boolean;
-        data: Map<string, LoadedChart>;
-        message: string;
-      };
+      return {} as ScobilityDBResponse<LoadedChart>;
     })
-    .catch((error: Error) =>
-      console.error("Error confirming spice data: ", error)
-    );
 }
 
-async function loadPlayerData_test<T>(catalog: string): Promise<T> {
+async function loadPlayerData_test(catalog: string): Promise<ScobilityDBResponse<LoadedPlayer>> {
   return fetch(`https://scobility.azurewebsites.net/catalog/${catalog}/players`)
-    .then((response: Response) => {
+    .then((response) => {
       if (!response.ok) {
         throw new Error(response.statusText);
       }
-      return response.json() as Promise<T>;
+      return response.json() as Promise<ScobilityDBResponse<LoadedPlayer>>;
     })
-    .catch((error: Error) =>
+    .catch((error: Error) => {
       console.error("Error loading player data: ", error)
-    )
-    .then((data: T) => {
+      return {} as ScobilityDBResponse<LoadedPlayer>;
+    })
+    .then((data: ScobilityDBResponse<LoadedPlayer>) => {
       data.data = new Map(Object.entries(data.data));
       return data;
     })
-    .catch((error: Error) =>
+    .catch((error: Error) => {
       console.error("Error converting player data: ", error)
-    )
-    .then((data: T) => {
-      return data as {
-        status: boolean;
-        data: Map<string, LoadedPlayer>;
-        message: string;
-      };
+      return {} as ScobilityDBResponse<LoadedPlayer>;
     })
-    .catch((error: Error) =>
-      console.error("Error confirming player data: ", error)
-    );
 }
 
-async function loadScoreData_test<T>(
+async function loadScoreData_test(
   catalog: string,
   player_id: number
-): Promise<T> {
+): Promise<ScobilityDBResponse<LoadedScore>> {
   return fetch(
     `https://scobility.azurewebsites.net/catalog/${catalog}/score/${player_id}`
   )
-    .then((response: Response) => {
+    .then((response) => {
       if (!response.ok) {
         throw new Error(response.statusText);
       }
-      return response.json() as Promise<T>;
+      return response.json() as Promise<ScobilityDBResponse<LoadedScore>>;
     })
-    .catch((error: Error) => console.error("Error loading score data: ", error))
-    .then((data: T) => {
+    .catch((error: Error) => {
+      console.error("Error loading score data: ", error)
+      return {} as ScobilityDBResponse<LoadedScore>;
+    })
+    .then((data: ScobilityDBResponse<LoadedScore>) => {
       data.data = new Map(Object.entries(data.data));
       return data;
     })
-    .catch((error: Error) =>
+    .catch((error: Error) => {
       console.error("Error converting score data: ", error)
-    )
-    .then((data: T) => {
-      return data as {
-        status: boolean;
-        data: Map<string, LoadedScore>;
-        message: string;
-      };
+      return {} as ScobilityDBResponse<LoadedScore>;
     })
-    .catch((error: Error) =>
-      console.error("Error confirming score data: ", error)
-    );
 }
 
 function transformLoadedScore(
@@ -305,13 +291,12 @@ function transformLoadedScore(
 }
 
 function filterScores(
-  score_data: (ProcessedScore | null)[],
+  score_data: ProcessedScore[],
   style_filter: string = "dance-single"
 ) {
   return score_data
-    .filter((row) => row !== null)
-    .filter((row) => row!.style == style_filter)
-    .sort((a, b) => a!.spice - b!.spice);
+    .filter((row) => row.style == style_filter)
+    .sort((a, b) => a.spice - b.spice)
 }
 
 // Least squares!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -546,7 +531,7 @@ const expct_curve = (expct: number) => {
 };
 
 const calculateScobility = (
-  score_data,
+  score_data: ProcessedScore[],
   fit_algorithm: boolean = true
 ): ScobilityStats => {
   // List out spice and quality for each played chart.
@@ -672,7 +657,7 @@ function hydrateProcessedScores(
     Array.from(ep_hand_size_map.keys()).map((key) => [key, 1000])
   );
   const ep_contenders = Object.fromEntries(
-    Array.from(ep_hand_size_map.keys()).map((key) => [key, []])
+    Array.from(ep_hand_size_map.keys()).map((key) => [key, new Array<ProcessedScore>()])
   );
   for (let row of ranked_by_current_ep) {
     if (ep_hand_size_map.has(row.meter)) {

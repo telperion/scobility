@@ -8,6 +8,7 @@ import {
   LineElement,
   Legend,
   Tooltip,
+  TooltipItem,
 } from "chart.js";
 import { Chart } from "react-chartjs-2";
 import { Select, Switch, Table, ConfigProvider, theme } from "antd";
@@ -25,6 +26,7 @@ import {
   ProcessedScore,
   LoadedChart,
   LoadedScore,
+  ScobilityDBResponse,
 } from "./scobility";
 
 ChartJS.register(LinearScale, PointElement, LineElement, Legend, Tooltip);
@@ -53,8 +55,8 @@ const generateOptions = (label_callback: Function) => ({
       callbacks: {
         label:
           label_callback === null
-            ? (context) => context.dataset.label
-            : (context) => {
+            ? (context: TooltipItem<"bubble">) => context.dataset.label
+            : (context: TooltipItem<"bubble">) => {
                 const result = label_callback(context);
                 return result;
               },
@@ -270,7 +272,7 @@ const onChange: TableProps<ProcessedScore>["onChange"] = (
   // console.log("params", pagination, filters, sorter, extra);
 };
 
-export default function Home(initialized: boolean = false) {
+export default function Home() {
   const [selectedCatalog, setSelectedCatalog] = useState("ITL2024");
 
   const [playerData, setPlayerData] = useState(
@@ -292,7 +294,7 @@ export default function Home(initialized: boolean = false) {
   const [scobilityStats, setScobilityStats] = useState(new ScobilityStats());
 
   const loadCatalog = async () => {
-    loadSpiceData(selectedCatalog).then((response) => {
+    loadSpiceData(selectedCatalog).then((response: ScobilityDBResponse<LoadedChart>) => {
       // console.log(response);
       setSpiceData(response.data);
     });
@@ -305,7 +307,7 @@ export default function Home(initialized: boolean = false) {
       setPlayerData(
         [...response.data.values()]
           .map((player) => ({
-            value: player.entrant_id,
+            value: Number(player.entrant_id),
             label: `${player.name} (#${player.entrant_id})`,
           }))
           .sort((a, b) => a.label.localeCompare(b.label))
@@ -328,9 +330,13 @@ export default function Home(initialized: boolean = false) {
   const runScobilityCalculations = async () => {
     // Transform LoadedScore[] into ProcessedScore[] with some
     // lookups into the spice data table.
-    const score_data = [...scoreData.values()].map((row) =>
-      transformLoadedScore(row, spiceData)
-    );
+    let score_data = new Array<ProcessedScore>()
+    for (let row of scoreData.values()) {
+      const row_transformed = transformLoadedScore(row, spiceData);
+      if (row_transformed) {
+        score_data.push(row_transformed!);
+      }
+    }
 
     // Filter by the current style choice (single or double)
     const style_filter_string = styleFilter ? "dance-single" : "dance-double";
@@ -373,7 +379,7 @@ export default function Home(initialized: boolean = false) {
     // - what chart it corresponds to,
     // - what the spice rating and their score quality are,
     // - and also their current and target % EX score.
-    const label_callback = (context) =>
+    const label_callback = (context: TooltipItem<"bubble">) =>
       context.datasetIndex == 0
         ? [
             table_data[context.dataIndex].title,
@@ -413,74 +419,78 @@ export default function Home(initialized: boolean = false) {
   }, [scoreData, fitAlgorithm, styleFilter]);
 
   return (
-    <ConfigProvider theme={{token: {fontSize: 12}, algorithm: theme.darkAlgorithm}}>
-      <main className="grid grid-cols-3 gap-2 text-center">
-        <div>
-          <Select
-            style={{ width: "90%" }}
-            defaultValue={1}
-            options={[...playerData]}
-            value={selectedPlayerID}
-            onChange={(e) => setSelectedPlayerID(e)}
-          />
+    <main>
+      <ConfigProvider
+        theme={{ token: { fontSize: 12 }, algorithm: theme.darkAlgorithm }}
+      >
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <div>
+            <Select
+              style={{ width: "90%" }}
+              defaultValue={1}
+              options={[...playerData]}
+              value={selectedPlayerID}
+              onChange={(e) => setSelectedPlayerID(e)}
+            />
+          </div>
+          <div>
+            <Switch
+              style={{ width: "90%" }}
+              checkedChildren="Single"
+              unCheckedChildren="Double"
+              value={styleFilter}
+              onChange={setStyleFilter}
+              defaultChecked
+            />
+          </div>
+          <div>
+            <Switch
+              style={{ width: "90%" }}
+              checkedChildren="scobility v2024.5"
+              unCheckedChildren="scobility v2023.x"
+              value={fitAlgorithm}
+              onChange={setFitAlgorithm}
+              defaultChecked
+            />
+          </div>
+
+          <div>Scobility</div>
+          <div className="col-span-2">Stats</div>
+
+          <div className="row-span-3 text-5xl">
+            {scobilityStats.coefs.valid()
+              ? scobilityStats.tourney_power.toFixed(3)
+              : "❓❓❓"}
+            💪
+          </div>
+
+          <div>{scobilityStats.coefs.describeTimingPower()}</div>
+          <div>{scobilityStats.coefs.describeMild()}</div>
+
+          <div>{scobilityStats.coefs.describeSpiceHorizon()}</div>
+          <div>{scobilityStats.coefs.describeHot()}</div>
+
+          <div className="col-span-2">{scobilityStats.coefs.strategize()}</div>
+
+          <div className="col-span-3">
+            <Chart
+              type="bubble"
+              options={graphOptions}
+              data={graphData}
+              className="size-full"
+            />
+          </div>
+
+          <div className="col-span-3">
+            <Table
+              columns={columns}
+              dataSource={[...tableData]}
+              onChange={onChange}
+              showSorterTooltip={{ target: "sorter-icon" }}
+            />
+          </div>
         </div>
-        <div>
-          <Switch
-            style={{ width: "90%" }}
-            checkedChildren="Single"
-            unCheckedChildren="Double"
-            value={styleFilter}
-            onChange={setStyleFilter}
-            defaultChecked
-          />
-        </div>
-        <div>
-          <Switch
-            style={{ width: "90%" }}
-            checkedChildren="scobility v2024.5"
-            unCheckedChildren="scobility v2023.x"
-            value={fitAlgorithm}
-            onChange={setFitAlgorithm}
-            defaultChecked
-          />
-        </div>
-
-        <div>Scobility</div>
-        <div className="col-span-2">Stats</div>
-
-        <div className="row-span-3 text-5xl">
-          {scobilityStats.coefs.valid()
-            ? scobilityStats.tourney_power.toFixed(3)
-            : "❓❓❓"}
-          💪
-        </div>
-
-        <div>{scobilityStats.coefs.describeTimingPower()}</div>
-        <div>{scobilityStats.coefs.describeMild()}</div>
-
-        <div>{scobilityStats.coefs.describeSpiceHorizon()}</div>
-        <div>{scobilityStats.coefs.describeHot()}</div>
-
-        <div className="col-span-2">{scobilityStats.coefs.strategize()}</div>
-
-        <div className="col-span-3">
-          <Chart
-            type="bubble"
-            options={graphOptions}
-            data={graphData}
-            className="size-full"
-          />
-        </div>
-
-        <div className="col-span-3">
-          <Table
-            columns={columns}
-            dataSource={[...tableData]}
-            onChange={onChange}
-            showSorterTooltip={{ target: "sorter-icon" }}
-          />
-        </div>
-      </main>
-    </ConfigProvider>
+      </ConfigProvider>
+    </main>
   );
 }
