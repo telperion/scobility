@@ -172,6 +172,13 @@ export interface ScobilityDBResponse<T> {
   data: Map<string, T>;
   message: string;
 }
+function no_db_response<T>(): ScobilityDBResponse<T> {
+  return {
+    status: false,
+    data: new Map<string, T>(),
+    message: "Something happened"
+  };
+}
 
 async function loadSpiceData(catalog: string): Promise<ScobilityDBResponse<LoadedChart>> {
   return fetch(
@@ -185,7 +192,7 @@ async function loadSpiceData(catalog: string): Promise<ScobilityDBResponse<Loade
     })
     .catch((error: Error) => {
       console.error("Error loading spice data: ", error);
-      return {} as ScobilityDBResponse<LoadedChart>;
+      return no_db_response<LoadedChart>();
     })
     .then((data: ScobilityDBResponse<LoadedChart>) => {
       data.data = new Map(Object.entries(data.data));
@@ -193,7 +200,7 @@ async function loadSpiceData(catalog: string): Promise<ScobilityDBResponse<Loade
     })
     .catch((error: Error) => {
       console.error("Error converting spice data: ", error)
-      return {} as ScobilityDBResponse<LoadedChart>;
+      return no_db_response<LoadedChart>();
     })
 }
 
@@ -207,7 +214,7 @@ async function loadPlayerData_test(catalog: string): Promise<ScobilityDBResponse
     })
     .catch((error: Error) => {
       console.error("Error loading player data: ", error)
-      return {} as ScobilityDBResponse<LoadedPlayer>;
+      return no_db_response<LoadedPlayer>();
     })
     .then((data: ScobilityDBResponse<LoadedPlayer>) => {
       data.data = new Map(Object.entries(data.data));
@@ -215,7 +222,7 @@ async function loadPlayerData_test(catalog: string): Promise<ScobilityDBResponse
     })
     .catch((error: Error) => {
       console.error("Error converting player data: ", error)
-      return {} as ScobilityDBResponse<LoadedPlayer>;
+      return no_db_response<LoadedPlayer>();
     })
 }
 
@@ -234,7 +241,7 @@ async function loadScoreData_test(
     })
     .catch((error: Error) => {
       console.error("Error loading score data: ", error)
-      return {} as ScobilityDBResponse<LoadedScore>;
+      return no_db_response<LoadedScore>();
     })
     .then((data: ScobilityDBResponse<LoadedScore>) => {
       data.data = new Map(Object.entries(data.data));
@@ -242,7 +249,7 @@ async function loadScoreData_test(
     })
     .catch((error: Error) => {
       console.error("Error converting score data: ", error)
-      return {} as ScobilityDBResponse<LoadedScore>;
+      return no_db_response<LoadedScore>();
     })
 }
 

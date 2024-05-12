@@ -3,12 +3,15 @@
 import React, { useState, useEffect } from "react";
 import {
   Chart as ChartJS,
+  CategoryScale,
   LinearScale,
   PointElement,
   LineElement,
   Legend,
   Tooltip,
   TooltipItem,
+  BubbleController,
+  LineController,
 } from "chart.js";
 import { Chart } from "react-chartjs-2";
 import { Select, Switch, Table, ConfigProvider, theme } from "antd";
@@ -29,7 +32,16 @@ import {
   ScobilityDBResponse,
 } from "./scobility";
 
-ChartJS.register(LinearScale, PointElement, LineElement, Legend, Tooltip);
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Legend,
+  Tooltip,
+  BubbleController,
+  LineController,
+  );
 
 const generateOptions = (label_callback: Function) => ({
   responsive: true,
