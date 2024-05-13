@@ -51,14 +51,14 @@ const generateOptions = (label_callback: Function) => ({
     x: {
       title: {
         display: true,
-        text: "Spice rating",
+        text: "Spice rating 🌶️",
       },
       beginAtZero: true,
     },
     y: {
       title: {
         display: true,
-        text: "Score quality",
+        text: "Score quality ✨",
       },
     },
   },
@@ -139,6 +139,7 @@ const columns: TableColumnsType<ProcessedScore> = [
   {
     title: "Chart",
     dataIndex: "title",
+    fixed: "left",
     showSorterTooltip: { target: "full-header" },
     sorter: (a, b) => a.title.localeCompare(b.title),
     sortDirections: ["ascend", "descend"],
@@ -151,7 +152,7 @@ const columns: TableColumnsType<ProcessedScore> = [
     sortDirections: ["ascend", "descend"],
   },
   {
-    title: "Quality",
+    title: "✨",
     dataIndex: "quality",
     sorter: (a, b) => a.quality - b.quality,
     render: (v) => (v !== null ? v.toFixed(2) : "n/a"),
@@ -258,6 +259,7 @@ const columns: TableColumnsType<ProcessedScore> = [
   },
   {
     title: "RP 🆙",
+    fixed: "right",
     dataIndex: "recoverable_rp",
     sorter: (a, b) => a.recoverable_rp - b.recoverable_rp,
     render: (v) => (v !== null ? parseInt(v) : "n/a"),
@@ -326,6 +328,16 @@ export default function Home() {
       );
     });
   };
+
+  const searchPlayers = (input: string, option?: {label: string; value: number}) => {
+    const try_id_lookup = parseInt(input);
+    if (isNaN(try_id_lookup)) {
+      return (option?.label ?? '').toLocaleLowerCase().includes(input.toLocaleLowerCase());
+    }
+    else {
+      return (option?.value ?? '').toString().includes(try_id_lookup.toString());
+    }
+  }
 
   const updateScoreData = async () => {
     if (selectedPlayerID > 0) {
@@ -431,18 +443,39 @@ export default function Home() {
   }, [scoreData, fitAlgorithm, styleFilter]);
 
   return (
-    <main>
+    <main className="m-2">
       <ConfigProvider
         theme={{ token: { fontSize: 12 }, algorithm: theme.darkAlgorithm }}
       >
         <div className="grid grid-cols-3 gap-2 text-center">
-          <div>
+          <div className="col-span-3 text-xl">
+            scobility! 🌶️
+          </div>
+          <div className="col-span-2 row-span-2 sm:col-span-1 sm:row-span-1">
+      <ConfigProvider
+        theme={{ token: { fontSize: 18 }, algorithm: theme.darkAlgorithm }}
+      >
             <Select
-              style={{ width: "90%" }}
+              showSearch
+              placeholder="Player (#ID)"
+              optionFilterProp="children"
+              style={{ width: "100%", height: "100%", margin: "auto" }}
               defaultValue={1}
               options={[...playerData]}
               value={selectedPlayerID}
-              onChange={(e) => setSelectedPlayerID(e)}
+              onChange={setSelectedPlayerID}
+              filterOption={searchPlayers}
+            />
+            </ConfigProvider>
+          </div>
+          <div>
+            <Switch
+              style={{ width: "90%" }}
+              checkedChildren="scobility v2024.5"
+              unCheckedChildren="scobility v2023.x"
+              value={fitAlgorithm}
+              onChange={setFitAlgorithm}
+              defaultChecked
             />
           </div>
           <div>
@@ -455,34 +488,22 @@ export default function Home() {
               defaultChecked
             />
           </div>
-          <div>
-            <Switch
-              style={{ width: "90%" }}
-              checkedChildren="scobility v2024.5"
-              unCheckedChildren="scobility v2023.x"
-              value={fitAlgorithm}
-              onChange={setFitAlgorithm}
-              defaultChecked
-            />
-          </div>
 
           <div>Scobility</div>
           <div className="col-span-2">Stats</div>
 
-          <div className="row-span-3 text-5xl">
+          <div className="row-span-2 text-2xl sm:text-4xl lg:text-6xl">
             {scobilityStats.coefs.valid()
-              ? scobilityStats.tourney_power.toFixed(3)
+              ? scobilityStats.tourney_power.toFixed(2)
               : "❓❓❓"}
             💪
           </div>
 
-          <div>{scobilityStats.coefs.describeTimingPower()}</div>
-          <div>{scobilityStats.coefs.describeMild()}</div>
+          <div className="whitespace-pre-line text-sm sm:whitespace-nowrap sm:text-md lg:text-lg">{scobilityStats.coefs.describeTimingPower()}</div>
+          <div className="whitespace-pre-line text-sm sm:whitespace-nowrap sm:text-md lg:text-lg">{scobilityStats.coefs.describeMild()}</div>
 
-          <div>{scobilityStats.coefs.describeSpiceHorizon()}</div>
-          <div>{scobilityStats.coefs.describeHot()}</div>
-
-          <div className="col-span-2">{scobilityStats.coefs.strategize()}</div>
+          <div className="whitespace-pre-line text-sm sm:whitespace-nowrap sm:text-md lg:text-lg">{scobilityStats.coefs.describeSpiceHorizon()}</div>
+          <div className="whitespace-pre-line text-sm sm:whitespace-nowrap sm:text-md lg:text-lg">{scobilityStats.coefs.describeHot()}</div>
 
           <div className="col-span-3">
             <Chart
@@ -493,13 +514,21 @@ export default function Home() {
             />
           </div>
 
+          <div className="col-span-3 whitespace-pre-line text-sm sm:text-md lg:text-lg">{scobilityStats.coefs.strategize()}</div>
+
           <div className="col-span-3">
             <Table
+              className="w-full"
               columns={columns}
               dataSource={[...tableData]}
               onChange={onChange}
               showSorterTooltip={{ target: "sorter-icon" }}
+              scroll={{x: "max-content"}}
             />
+          </div>
+          <div className="col-span-3 text-sm">
+            contact: @telperion (discord)<br/>
+            info: <a href="https://telp.work/2022/08/01/scobility/" className="decoration-solid text-sky-400 hover:text-pink-400">original blog</a>, <a href="https://telp.work/2024/05/13/scobility-v2024/" className="decoration-solid text-sky-400 hover:text-pink-400">v2024 update</a>
           </div>
         </div>
       </ConfigProvider>

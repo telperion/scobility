@@ -24,22 +24,22 @@ class ScobilityCoefficients {
   describeTimingPower() {
     // Both v2023 and v2024 have a meaningful Y-intercept.
     return (
-      "timing power: " +
-      (this.valid() ? this.timing_power.toFixed(3) : "❓") +
+      "timing power:\n" +
+      (this.valid() ? this.timing_power.toFixed(2) : "❓") +
       " ✨"
     );
   }
 
   describeMild() {
     // Need to distinguish between v2023 and v2024 for this coefficient.
-    let readableName = "mild sauce: ";
+    let readableName = "mild sauce:\n";
     if (this.version < 2024) {
-      readableName = "spice tolerance: ";
+      readableName = "spice tolerance:\n";
     }
 
     return (
       readableName +
-      (this.valid() ? this.mild_slope.toFixed(3) : "❓") +
+      (this.valid() ? this.mild_slope.toFixed(2) : "❓") +
       " ✨/🌶️"
     );
   }
@@ -51,8 +51,8 @@ class ScobilityCoefficients {
     }
 
     return (
-      "hot sauce: " +
-      (this.valid() ? this.hot_slope.toFixed(3) : "❓") +
+      "hot sauce:\n" +
+      (this.valid() ? this.hot_slope.toFixed(2) : "❓") +
       " ✨/🌶️"
     );
   }
@@ -64,10 +64,10 @@ class ScobilityCoefficients {
     }
 
     return (
-      "spice horizon: (" +
-      (this.valid() ? this.horizon_spice.toFixed(3) : "❓") +
+      "spice horizon:\n(" +
+      (this.valid() ? this.horizon_spice.toFixed(2) : "❓") +
       " 🌶️, " +
-      (this.valid() ? this.horizon_quality.toFixed(3) : "❓") +
+      (this.valid() ? this.horizon_quality.toFixed(2) : "❓") +
       " ✨)"
     );
   }
@@ -91,7 +91,7 @@ class ScobilityCoefficients {
       } else {
         return (
           "Train charts with a spice rating around " +
-          this.horizon_spice.toFixed(3) +
+          this.horizon_spice.toFixed(2) +
           "🌶️."
         );
       }
