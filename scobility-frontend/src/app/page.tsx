@@ -143,6 +143,7 @@ const columns: TableColumnsType<ProcessedScore> = [
     showSorterTooltip: { target: "full-header" },
     sorter: (a, b) => a.title.localeCompare(b.title),
     sortDirections: ["ascend", "descend"],
+    width: "150px",
   },
   {
     title: "🌶️",
@@ -339,6 +340,19 @@ export default function Home() {
     }
   }
 
+  const getLastUpdateDate = (chart_data: LoadedChart[]) => {
+    if (chart_data.length == 0) {
+      return null;
+    }
+    else {
+      return new Date(chart_data.map(
+        (row) => (Date.parse(row.spice_calc_time.toLocaleString()))
+      ).reduce(
+        (earliest, d) => (Math.min(d, earliest)), Date.now()
+      )).toLocaleString()
+    }
+  }
+
   const updateScoreData = async () => {
     if (selectedPlayerID > 0) {
       // In the ITL2024 website ecosystem, loadScoreData_test should be
@@ -450,6 +464,9 @@ export default function Home() {
         <div className="grid grid-cols-3 gap-2 text-center">
           <div className="col-span-3 text-xl">
             scobility! 🌶️
+          </div>
+          <div className="col-span-3 text-xs">
+            last data update: {getLastUpdateDate([...spiceData.values()]) ?? "❓"}
           </div>
           <div className="col-span-2 row-span-2 sm:col-span-1 sm:row-span-1">
       <ConfigProvider
