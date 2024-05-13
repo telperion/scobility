@@ -5,8 +5,10 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "scobility",
-  description: "Sample frontend functions",
+  title: "scobility v2024.5",
+  creator: "telp",
+  authors: [{name: "telp", url: "https://telp.work/"}],
+  description: "Evaluate your scores independently of block rating.",
 };
 
 export default function RootLayout({
