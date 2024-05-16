@@ -16,9 +16,15 @@ class ScobilityCoefficients {
   mild_slope: number = -1;
   hot_slope: number = -1;
   residual: number = -1;
+  quality_fit: Function = (s: number) => 0;
 
   valid() {
     return this.timing_power >= 0;
+  }
+
+  targetFromSpice(spice: number) {
+    const target = perfect_offset - Math.pow(2, spice - this.quality_fit(spice));
+    return target < 0 ? 0 : target > 1 ? 1 : target;
   }
 
   describeTimingPower() {
@@ -103,12 +109,38 @@ class ScobilityCoefficients {
       }
     }
   }
+
+  explain_horizon() {
+    if (!this.valid()) {
+      return "🌶️🌶️🌶️";
+    }
+
+    if (this.version < 2024) {
+      return "🌶️🌶️🌶️";
+    } 
+
+    const horizon_selector = (
+      ((this.mild_slope < 0) ? 0 : 4) +
+      ((this.hot_slope < 0) ? 0 : 2) + 
+      ((this.mild_slope < this.hot_slope) ? 0 : 1)
+    )
+    const horizon_explanations = [
+      "levels off",
+      "takes a turn for the worse",
+      "reaches a minimum",
+      "does something REALLY strange",    // (-mild, +hot, mild > hot) can't happen.
+      "does something REALLY strange",    // (+mild, -hot, mild < hot) can't happen.
+      "reaches a maximum",
+      "takes a turn for the better",
+      "levels off",
+    ]
+    return "Your spice tolerance compared to your peers " + horizon_explanations[horizon_selector] + " at " + this.horizon_spice.toFixed(2) + "🌶️, where your predicted score is " + (100 * this.targetFromSpice(this.horizon_spice)).toFixed(2) + "% EX.";
+  }
 }
 
 class ScobilityStats {
   tourney_power: number = -1;
   coefs: ScobilityCoefficients = new ScobilityCoefficients();
-  quality_fit: Function = (s: number) => 0;
 }
 
 export interface LoadedPlayer {
@@ -552,16 +584,16 @@ const calculateScobility = (
   if (fit_algorithm) {
     // scobility v2024
     const coefs = spice_horizon_fit(spice_values, quality_values);
+    coefs.quality_fit = (s: number) => {
+      if (s <= coefs.horizon_spice) {
+        return coefs.mild_slope * (s - coefs.horizon_spice) + coefs.horizon_quality;
+      } else {
+        return coefs.hot_slope * (s - coefs.horizon_spice) + coefs.horizon_quality;
+      }
+    };
     return {
       tourney_power: tourney_power,
       coefs: coefs,
-      quality_fit: (s: number) => {
-        if (s <= coefs.horizon_spice) {
-          return coefs.mild_slope * (s - coefs.horizon_spice) + coefs.horizon_quality;
-        } else {
-          return coefs.hot_slope * (s - coefs.horizon_spice) + coefs.horizon_quality;
-        }
-      },
     };
   } else {
     // scobility v2023 can still be calculated for comparison :)
@@ -575,17 +607,17 @@ const calculateScobility = (
       mild_slope: coefs_line.c1,
       hot_slope: coefs_line.c1,
       residual: coefs_line.residual,
-    });
-    return {
-      tourney_power: tourney_power,
-      coefs: coefs,
       quality_fit: (s: number) => {
         if (s <= coefs.horizon_spice) {
           return coefs.mild_slope * (s - coefs.horizon_spice) + coefs.horizon_quality;
         } else {
           return coefs.hot_slope * (s - coefs.horizon_spice) + coefs.horizon_quality;
         }
-      },
+      }
+    });
+    return {
+      tourney_power: tourney_power,
+      coefs: coefs,
     };
   }
 };
@@ -613,10 +645,7 @@ function hydrateProcessedScores(
   // Start by calculating target score and current/achievable SP/EP.
   for (let row of score_data) {
     // TODO: double-check this math
-    const target_missing_ex =
-      perfect_offset - Math.pow(2, row.spice - scobility.quality_fit(row.spice));
-    row.target_score =
-      target_missing_ex < 0 ? 0 : target_missing_ex > 1 ? 1 : target_missing_ex;
+    row.target_score = scobility.coefs.targetFromSpice(row.spice);
     row.target_sp =
       row.target_score > 0.99999
         ? row.value

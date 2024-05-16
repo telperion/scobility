@@ -15,6 +15,7 @@ import {
 } from "chart.js";
 import { Chart } from "react-chartjs-2";
 import { Select, Switch, Table, ConfigProvider, theme } from "antd";
+import { Tooltip as TooltipElement } from "antd";
 import type { TableColumnsType, TableProps } from "antd";
 
 import {
@@ -426,7 +427,7 @@ export default function Home() {
         coefs.valid()
           ? [0, coefs.horizon_spice, high_spice].map((s) => ({
               x: s,
-              y: scobility_stats.quality_fit(s),
+              y: scobility_stats.coefs.quality_fit(s),
             }))
           : []
       )
@@ -532,18 +533,28 @@ export default function Home() {
           <div>Scobility</div>
           <div className="col-span-2">Stats</div>
 
-          <div className="row-span-2 text-2xl sm:text-4xl lg:text-6xl">
-            {scobilityStats.coefs.valid()
-              ? scobilityStats.tourney_power.toFixed(2)
-              : "❓❓"}
-            💪
-          </div>
+          <TooltipElement title={"A summary of your total timing achievement across all " + selectedCatalog + " charts."} placement="bottom">
+            <div className="row-span-2 text-2xl sm:text-4xl lg:text-6xl">
+              {scobilityStats.coefs.valid()
+                ? scobilityStats.tourney_power.toFixed(2)
+                : "❓❓"}
+              💪
+            </div>
+          </TooltipElement>
 
-          <div className="whitespace-pre-line text-sm sm:whitespace-nowrap sm:text-md lg:text-lg">{scobilityStats.coefs.describeTimingPower()}</div>
-          <div className="whitespace-pre-line text-sm sm:whitespace-nowrap sm:text-md lg:text-lg">{scobilityStats.coefs.describeMild()}</div>
+          <TooltipElement title={"Your predicted timing skill on the mildest possible chart. This is equivalent to " + (100 * scobilityStats.coefs.targetFromSpice(0)).toFixed(2) + "% EX."} placement="bottom">
+            <div className="whitespace-pre-line text-sm sm:whitespace-nowrap sm:text-md lg:text-lg">{scobilityStats.coefs.describeTimingPower()}</div>
+          </TooltipElement>
+          <TooltipElement title="How much does your score improve against your peers, if the chart has a little extra spice?" placement="bottom">
+            <div className="whitespace-pre-line text-sm sm:whitespace-nowrap sm:text-md lg:text-lg">{scobilityStats.coefs.describeMild()}</div>
+          </TooltipElement>
 
-          <div className="whitespace-pre-line text-sm sm:whitespace-nowrap sm:text-md lg:text-lg">{scobilityStats.coefs.describeSpiceHorizon()}</div>
+          <TooltipElement title={fitAlgorithm ? scobilityStats.coefs.explain_horizon() : "🌶️🌶️🌶️"} placement="bottom">
+            <div className="whitespace-pre-line text-sm sm:whitespace-nowrap sm:text-md lg:text-lg">{scobilityStats.coefs.describeSpiceHorizon()}</div>
+          </TooltipElement>
+          <TooltipElement title={fitAlgorithm ? "How much does your score improve against your peers, if the chart has a little extra spice - when it's already pretty spicy?" : "🌶️🌶️🌶️"} placement="bottom">
           <div className="whitespace-pre-line text-sm sm:whitespace-nowrap sm:text-md lg:text-lg">{scobilityStats.coefs.describeHot()}</div>
+          </TooltipElement>
 
           <div className="col-span-3">
             <Chart
