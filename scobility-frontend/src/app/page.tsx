@@ -53,12 +53,24 @@ const generateOptions = (label_callback: Function) => ({
         display: true,
         text: "Spice rating 🌶️",
       },
+      grid: {
+        display: true,
+        drawOnChartArea: true,
+        drawTicks: true,
+        color: "#191919",
+      },
       beginAtZero: true,
     },
     y: {
       title: {
         display: true,
         text: "Score quality ✨",
+      },
+      grid: {
+        display: true,
+        drawOnChartArea: true,
+        drawTicks: true,
+        color: "#191919",
       },
     },
   },
@@ -110,8 +122,8 @@ const generateGraphData = (
             (p.last_played.getTime() - oldest_score) /
             (newest_score - oldest_score);
           return `hsl(330, ${Math.round(
-            100 * recency * recency
-          )}%, ${Math.round(30 + 40 * recency)}%, 0.7)`;
+            100 * Math.pow(recency, 6)
+          )}%, ${Math.round(30 + 40 * recency * recency)}%, 0.7)`;
         }),
       },
       {
@@ -125,7 +137,7 @@ const generateGraphData = (
           .sort((a, b) => a.x - b.x),
         borderColor: "rgba(53, 162, 235, 0.9)",
         borderWidth: 2,
-        fill: false,
+        fill: true,
         backgroundColor: "rgba(53, 162, 235, 0.5)",
       },
     ],
@@ -263,7 +275,14 @@ const columns: TableColumnsType<ProcessedScore> = [
     fixed: "right",
     dataIndex: "recoverable_rp",
     sorter: (a, b) => a.recoverable_rp - b.recoverable_rp,
-    render: (v) => (v !== null ? parseInt(v) : "n/a"),
+    render: (v) => {
+      const v_int = parseInt(v)
+      if (v !== null) {
+        return (v_int >= 0 ? v_int : 0);
+      } else {
+        return "n/a";
+      }
+    },
     defaultSortOrder: "descend",
     sortDirections: ["ascend", "descend"],
     filters: [
@@ -421,9 +440,9 @@ export default function Home() {
       context.datasetIndex == 0
         ? [
             table_data[context.dataIndex].title,
-            `${context.parsed.x.toFixed(2)} spice, ${context.parsed.y.toFixed(
+            `${context.parsed.x.toFixed(2)} spice 🌶️, ${context.parsed.y.toFixed(
               2
-            )} quality`,
+            )} quality ✨`,
             `${(100 * table_data[context.dataIndex].score).toFixed(
               2
             )}% EX now, ${(
@@ -456,8 +475,12 @@ export default function Home() {
     runScobilityCalculations();
   }, [scoreData, fitAlgorithm, styleFilter]);
 
+  useEffect(() => {
+    runScobilityCalculations();
+  }, [scoreData, fitAlgorithm, styleFilter]);
+
   return (
-    <main className="m-2">
+    <main className="m-2 text-white bg-black">
       <ConfigProvider
         theme={{ token: { fontSize: 12 }, algorithm: theme.darkAlgorithm }}
       >
@@ -487,7 +510,7 @@ export default function Home() {
           </div>
           <div>
             <Switch
-              style={{ width: "90%" }}
+              style={{ width: "90%", backgroundColor: fitAlgorithm ? "rgb(190, 24, 93)" : "rgb(3, 105, 161)" }}
               checkedChildren="scobility v2024.5"
               unCheckedChildren="scobility v2023.x"
               value={fitAlgorithm}
@@ -497,7 +520,7 @@ export default function Home() {
           </div>
           <div>
             <Switch
-              style={{ width: "90%" }}
+              style={{ width: "90%", backgroundColor: styleFilter ? "rgb(3, 105, 161)" : "rgb(190, 24, 93)" }}
               checkedChildren="Single"
               unCheckedChildren="Double"
               value={styleFilter}
@@ -512,7 +535,7 @@ export default function Home() {
           <div className="row-span-2 text-2xl sm:text-4xl lg:text-6xl">
             {scobilityStats.coefs.valid()
               ? scobilityStats.tourney_power.toFixed(2)
-              : "❓❓❓"}
+              : "❓❓"}
             💪
           </div>
 

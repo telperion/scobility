@@ -66,9 +66,9 @@ class ScobilityCoefficients {
     return (
       "spice horizon:\n(" +
       (this.valid() ? this.horizon_spice.toFixed(2) : "❓") +
-      " 🌶️, " +
+      "🌶️, " +
       (this.valid() ? this.horizon_quality.toFixed(2) : "❓") +
-      " ✨)"
+      "✨)"
     );
   }
 
