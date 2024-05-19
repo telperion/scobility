@@ -366,10 +366,10 @@ export default function Home() {
     }
     else {
       return new Date(chart_data.map(
-        (row) => (Date.parse(row.spice_calc_time.toLocaleString()))
+        (row) => (Date.parse(row.spice_calc_time.toLocaleString()+"Z"))
       ).reduce(
         (earliest, d) => (Math.min(d, earliest)), Date.now()
-      )).toLocaleString()
+      )).toLocaleString(undefined, {timeZoneName: "short"})
     }
   }
 
