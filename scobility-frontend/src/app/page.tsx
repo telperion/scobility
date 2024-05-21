@@ -147,10 +147,23 @@ const generateGraphData = (
 
 const initialGraphData = generateGraphData([], []);
 const initialGraphOptions = generateOptions(() => "");
+const summarizeRelativeQuality = (relative_quality: number) => {
+  if (relative_quality > 1.2) {
+    return (<TooltipElement title="Achievement">🏋️</TooltipElement>);
+  } else if (relative_quality > 0.4) {
+    return (<TooltipElement title="Strong score">💪</TooltipElement>);
+  } else if (relative_quality > -0.4) {
+    return (<TooltipElement title="Right on target">✨</TooltipElement>);
+  } else if (relative_quality > -1.2) {
+    return (<TooltipElement title="Could be raised">😅</TooltipElement>);
+  } else {
+    return (<TooltipElement title="Opportunity">🥵</TooltipElement>);
+  }
+}
 
 const columns: TableColumnsType<ProcessedScore> = [
   {
-    title: "Chart",
+    title: <TooltipElement title="Chart difficulty and song title">Chart</TooltipElement>,
     dataIndex: "title",
     fixed: "left",
     showSorterTooltip: { target: "full-header" },
@@ -159,28 +172,35 @@ const columns: TableColumnsType<ProcessedScore> = [
     width: "150px",
   },
   {
-    title: "🌶️",
+    title: <TooltipElement title="Spice rating: how hard this chart is to score on">🌶️</TooltipElement>,
     dataIndex: "spice",
     sorter: (a, b) => a.spice - b.spice,
     render: (v) => (v !== null ? v.toFixed(2) : "n/a"),
     sortDirections: ["ascend", "descend"],
   },
   {
-    title: "✨",
+    title: <TooltipElement title="Score quality: how good your score on this chart is, considering its difficulty">✨</TooltipElement>,
     dataIndex: "quality",
     sorter: (a, b) => a.quality - b.quality,
     render: (v) => (v !== null ? v.toFixed(2) : "n/a"),
     sortDirections: ["ascend", "descend"],
   },
   {
-    title: "Current",
+    title: <TooltipElement title="How does scobility feel about your score on this chart?">💭</TooltipElement>,
+    dataIndex: "relative_quality",
+    sorter: (a, b) => a.relative_quality - b.relative_quality,
+    render: (v) => (v !== null ? summarizeRelativeQuality(v) : "n/a"),
+    sortDirections: ["ascend", "descend"],
+  },
+  {
+    title: <TooltipElement title="Your score on this chart in the last scobility scrape">Current</TooltipElement>,
     dataIndex: "score",
     sorter: (a, b) => a.score - b.score,
     render: (v) => (v !== null ? (100 * v).toFixed(2).toString() + "%" : "n/a"),
     sortDirections: ["ascend", "descend"],
   },
   {
-    title: "Target",
+    title: <TooltipElement title="The score scobility thinks you are capable of. You may have already beat it!">Target</TooltipElement>,
     dataIndex: "target_score",
     sorter: (a, b) => a.target_score - b.target_score,
     render: (v) => (v !== null ? (100 * v).toFixed(2).toString() + "%" : "n/a"),
@@ -195,7 +215,7 @@ const columns: TableColumnsType<ProcessedScore> = [
       value === "raisesOnly" ? record.target_score > record.score : true,
   },
   {
-    title: "SP",
+    title: <TooltipElement title="Song Points that your current score is worth">SP</TooltipElement>,
     dataIndex: "current_sp",
     sorter: (a, b) => a.current_sp - b.current_sp,
     render: (v) => (v !== null ? parseInt(v) : "n/a"),
@@ -210,7 +230,7 @@ const columns: TableColumnsType<ProcessedScore> = [
       value === "contribOnly" ? record.contributes_sp : true,
   },
   {
-    title: "SP 🆙",
+    title: <TooltipElement title="Song Points you could recover by meeting the target score">SP 🆙</TooltipElement>,
     dataIndex: "recoverable_sp",
     sorter: (a, b) => a.recoverable_sp - b.recoverable_sp,
     render: (v) => (v !== null ? parseInt(v) : "n/a"),
@@ -225,7 +245,7 @@ const columns: TableColumnsType<ProcessedScore> = [
       value === "posOnly" ? record.recoverable_sp > 0 : true,
   },
   {
-    title: "EP",
+    title: <TooltipElement title="EX Points that your current score is worth">EP</TooltipElement>,
     dataIndex: "current_ep",
     sorter: (a, b) => a.current_ep - b.current_ep,
     render: (v) => (v !== null ? parseInt(v) : "n/a"),
@@ -240,7 +260,7 @@ const columns: TableColumnsType<ProcessedScore> = [
       value === "contribOnly" ? record.contributes_ep : true,
   },
   {
-    title: "EP 🆙",
+    title: <TooltipElement title="EX Points you could recover by meeting the target score">EP 🆙</TooltipElement>,
     dataIndex: "recoverable_ep",
     sorter: (a, b) => a.recoverable_ep - b.recoverable_ep,
     render: (v) => (v !== null ? parseInt(v) : "n/a"),
@@ -255,7 +275,7 @@ const columns: TableColumnsType<ProcessedScore> = [
       value === "posOnly" ? record.recoverable_ep > 0 : true,
   },
   {
-    title: "RP",
+    title: <TooltipElement title="Ranking Points that your current score is worth">RP</TooltipElement>,
     dataIndex: "current_rp",
     sorter: (a, b) => a.current_rp - b.current_rp,
     render: (v) => (v !== null ? parseInt(v) : "n/a"),
@@ -272,7 +292,7 @@ const columns: TableColumnsType<ProcessedScore> = [
         : true,
   },
   {
-    title: "RP 🆙",
+    title: <TooltipElement title="Ranking Points you could recover by meeting the target score">RP 🆙</TooltipElement>,
     fixed: "right",
     dataIndex: "recoverable_rp",
     sorter: (a, b) => a.recoverable_rp - b.recoverable_rp,
@@ -292,7 +312,6 @@ const columns: TableColumnsType<ProcessedScore> = [
         value: "posOnly",
       },
     ],
-    defaultFilteredValue: ["posOnly"],
     onFilter: (value, record) =>
       value === "posOnly" ? record.recoverable_rp > 0 : true,
   },

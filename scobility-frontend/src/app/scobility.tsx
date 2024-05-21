@@ -184,6 +184,7 @@ export interface ProcessedScore {
   spice: number;
   value: number;
   quality: number;
+  relative_quality: number;
   plays: number;
   last_played: Date;
   current_sp: number;
@@ -313,6 +314,7 @@ function transformLoadedScore(
     spice: Math.log2(chart_info.spice),
     value: chart_info.value,
     quality: Math.log2(chart_info.spice) - Math.log2(perfect_offset - row.score),
+    relative_quality: 0,
     plays: row.plays,
     last_played: typeof(row.last_played) == "string" ? new Date(row.last_played) : row.last_played,
     current_sp: 0,
@@ -645,6 +647,7 @@ function hydrateProcessedScores(
   // Start by calculating target score and current/achievable SP/EP.
   for (let row of score_data) {
     // TODO: double-check this math
+    row.relative_quality = row.quality - scobility.coefs.quality_fit(row.spice);
     row.target_score = scobility.coefs.targetFromSpice(row.spice);
     row.target_sp =
       row.target_score > 0.99999
