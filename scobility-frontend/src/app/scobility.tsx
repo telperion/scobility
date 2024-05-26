@@ -139,6 +139,8 @@ class ScobilityCoefficients {
 }
 
 class ScobilityStats {
+  entrant_id: bigint = BigInt(-1);
+  name: string = "";
   tourney_power: number = -1;
   coefs: ScobilityCoefficients = new ScobilityCoefficients();
 }
@@ -177,6 +179,9 @@ export interface LoadedScore {
 
 export interface ProcessedScore {
   key: React.Key;
+  entrant_id: bigint;
+  entrant_name: string;
+  chart_id: bigint;
   title: string;
   meter: number;
   score: number;
@@ -288,7 +293,8 @@ async function loadScoreData_test(
 
 function transformLoadedScore(
   row: LoadedScore,
-  charts: Map<string, LoadedChart>
+  charts: Map<string, LoadedChart>,
+  players: Map<string, LoadedPlayer>,
 ): ProcessedScore | null {
   const chart_info = charts.get(row.hash);
   if (!chart_info) {
@@ -303,6 +309,9 @@ function transformLoadedScore(
 
   return {
     key: row.chart_id,
+    entrant_id: row.entrant_id,
+    entrant_name: players.get(row.entrant_id.toString())?.name ?? "",
+    chart_id: row.chart_id,
     title:
       { "dance-single": "[S", "dance-double": "[D" }[true_style] +
       chart_info.meter.toString().padStart(2, "0") +
@@ -573,6 +582,7 @@ const expct_curve = (expct: number) => {
 
 const calculateScobility = (
   score_data: ProcessedScore[],
+  player_data: LoadedPlayer | undefined,
   fit_algorithm: boolean = true
 ): ScobilityStats => {
   // List out spice and quality for each played chart.
@@ -594,6 +604,8 @@ const calculateScobility = (
       }
     };
     return {
+      entrant_id: player_data?.entrant_id ?? BigInt(-1),
+      name: player_data?.name ?? "[n/a]",
       tourney_power: tourney_power,
       coefs: coefs,
     };
@@ -618,6 +630,8 @@ const calculateScobility = (
       }
     });
     return {
+      entrant_id: player_data?.entrant_id ?? BigInt(-1),
+      name: player_data?.name ?? "[n/a]",
       tourney_power: tourney_power,
       coefs: coefs,
     };

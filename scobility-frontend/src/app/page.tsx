@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -30,6 +30,7 @@ import {
   ProcessedScore,
   LoadedChart,
   LoadedScore,
+  LoadedPlayer,
   ScobilityDBResponse,
 } from "./scobility";
 
@@ -326,13 +327,22 @@ const onChange: TableProps<ProcessedScore>["onChange"] = (
   // console.log("params", pagination, filters, sorter, extra);
 };
 
-export default function Home() {
+
+export default function Home({params}: { params: {initialPlayerIndex: number} }) {
+  const mounted = useRef(false);
   const [selectedCatalog, setSelectedCatalog] = useState("ITL2024");
 
-  const [playerData, setPlayerData] = useState(
+  const [playerData, setPlayerData] = useState(new Map<string, LoadedPlayer>(
     Array(10)
       .fill(0)
-      .map((_, i) => ({ value: i + 1, label: "Player " + (i + 1).toString() }))
+      .map((_, i) => ([
+        i.toString(),
+        {
+          entrant_id: BigInt(i + 1),
+          name: "Player " + (i + 1).toString(),
+          scobility_calc_time: Date.now().toLocaleString()
+        } as LoadedPlayer]))
+    )
   );
 
   const [selectedPlayerID, setSelectedPlayerID] = useState(1);
@@ -352,20 +362,15 @@ export default function Home() {
       // console.log(response);
       setSpiceData(response.data);
     });
+  };
 
+  const loadPlayers = async () => {
     // In the ITL2024 website ecosystem, loadPlayerData_test should be
     // replaced with a function that loads players into a list of
     // {value: player's entrant ID, label: player's name}
     loadPlayerData_test(selectedCatalog).then((response) => {
       // console.log(response);
-      setPlayerData(
-        [...response.data.values()]
-          .map((player) => ({
-            value: Number(player.entrant_id),
-            label: `${player.name} (#${player.entrant_id})`,
-          }))
-          .sort((a, b) => a.label.localeCompare(b.label))
-      );
+      setPlayerData(response.data)
     });
   };
 
@@ -409,7 +414,7 @@ export default function Home() {
     // lookups into the spice data table.
     let score_data = new Array<ProcessedScore>()
     for (let row of scoreData.values()) {
-      const row_transformed = transformLoadedScore(row, spiceData);
+      const row_transformed = transformLoadedScore(row, spiceData, playerData);
       if (row_transformed) {
         score_data.push(row_transformed!);
       }
@@ -420,7 +425,7 @@ export default function Home() {
     const filtered_scores = filterScores(score_data, style_filter_string);
 
     // Calculate the scobility stats.
-    const scobility_stats = calculateScobility(filtered_scores, fitAlgorithm);
+    const scobility_stats = calculateScobility(filtered_scores, playerData.get(selectedPlayerID.toString()), fitAlgorithm);
 
     // Hydrate the scores using the scobility best-fit approximation.
     // Also sort by last played time so the graph can properly colorize
@@ -479,10 +484,21 @@ export default function Home() {
 
   useEffect(() => {
     const updateCatalogData = async () => {
-      loadCatalog().then(() => setSelectedPlayerID(1));
+      await loadCatalog();
     };
     updateCatalogData();
   }, [selectedCatalog]);
+
+  useEffect(() => {
+    const updatePlayerList = async () => {
+      await loadPlayers().then(() => {
+        const playerID = Number(params.initialPlayerIndex);
+        console.log("initial player ID: #%d", playerID);
+        setSelectedPlayerID((playerID > 0 && playerID < playerData.size) ? playerID : 1)
+      });
+    };
+    updatePlayerList();
+  }, [spiceData])
 
   useEffect(() => {
     const updatePlayer = async () => {
@@ -490,10 +506,6 @@ export default function Home() {
     };
     updatePlayer();
   }, [selectedPlayerID]);
-
-  useEffect(() => {
-    runScobilityCalculations();
-  }, [scoreData, fitAlgorithm, styleFilter]);
 
   useEffect(() => {
     runScobilityCalculations();
@@ -521,7 +533,11 @@ export default function Home() {
               optionFilterProp="children"
               style={{ width: "100%", height: "100%", margin: "auto" }}
               defaultValue={1}
-              options={[...playerData]}
+              options={
+                [...playerData]
+                .map((v, i) => ({value: Number(v[1].entrant_id), label: `${v[1].name} (#${v[1].entrant_id})`}))
+                .sort((a, b) => a.label.localeCompare(b.label))
+              }
               value={selectedPlayerID}
               onChange={setSelectedPlayerID}
               filterOption={searchPlayers}
