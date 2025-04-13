@@ -135,6 +135,7 @@ __azurite_db*__.json
 .python_packages
 
 # scobility stuff
+scratch/gs_data/
 scratch/itl_data/
 scratch/itl_2022-06-27-07.tar.gz
 scratch/3ic_data/
@@ -143,4 +144,5 @@ scratch/itl2023_data/
 scratch/itl2024_data/
 scratch/itl2024_prep/
 scratch/smx_data/
+scratch/scobility_*.json
 scobility-db

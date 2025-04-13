@@ -1,16 +1,17 @@
 import requests
+import glob
 import logging
 import os
 import json
 from datetime import datetime as dt
 from time import sleep
 
-tourney = 'itl2024'
+default_tourney = 'itl2024'
 
 def timestamp():
     return dt.utcnow().strftime('%Y%m%d-%H%M%S-%f')[:-3]
 
-def setup_scrape() -> str:
+def setup_scrape(tourney: str = default_tourney) -> str:
     path_dst = os.path.join(f'{tourney}_data', dt.utcnow().strftime('%Y%m%d'))
     os.makedirs(path_dst, exist_ok=True)
 
@@ -33,7 +34,7 @@ def setup_scrape() -> str:
 
     return path_dst
 
-def scrape_charts(path_dst: str):
+def scrape_charts(path_dst: str, tourney: str = default_tourney):
     # Chart enumeration query
     charts = {}
     strikes = []
@@ -59,7 +60,7 @@ def scrape_charts(path_dst: str):
     with open(os.path.join(path_dst, 'charts.json'), 'w', encoding='utf-8') as fp:
         json.dump(charts, fp)
 
-def scrape_entrants(path_dst: str):
+def scrape_entrants(path_dst: str, tourney: str = default_tourney):
     p_entrants = os.path.join(path_dst, 'entrant_info')
     if not os.path.exists(p_entrants):
         os.makedirs(p_entrants)
@@ -89,13 +90,28 @@ def scrape_entrants(path_dst: str):
             with open(os.path.join(p_entrants, f'{i}.json'), 'w', encoding='utf-8') as fp:
                 json.dump(entrants[i], fp)
 
-def scrape_scores(path_dst: str):
+def scrape_scores(path_dst: str, tourney: str = default_tourney):
     # Scores query (examine entrants' played songs pages)
     p_scores = os.path.join(path_dst, 'song_scores')
     if not os.path.exists(p_scores):
         os.makedirs(p_scores)
 
-    with open(os.path.join(path_dst, 'charts.json'), 'r', encoding='utf-8') as fp:
+    charts_json_src = os.path.join(path_dst, 'charts.json')
+    if not os.path.exists(charts_json_src):
+        one_level_up = os.path.split(path_dst)[0]
+        charts_json_src_options = [
+            os.path.join(one_level_up, fn, "charts.json")
+            for fn in os.listdir(one_level_up)
+        ]
+        charts_json_src_options = sorted([
+            (os.path.getctime(fn), fn)
+            for fn in charts_json_src_options
+            if os.path.exists(fn)
+        ], key=lambda v: -v[0])
+        charts_json_src = charts_json_src_options[0][1]
+    logging.info(f"Using {charts_json_src} as chart info source file")
+
+    with open(charts_json_src, 'r', encoding='utf-8') as fp:
         charts = json.load(fp)
 
     # Entrant's played songs pages query
@@ -146,9 +162,6 @@ def scrape_scores(path_dst: str):
     p_charts = os.path.join(path_dst, 'song_info')
     if not os.path.exists(p_charts):
         os.makedirs(p_charts)
-
-    with open(os.path.join(path_dst, 'charts.json'), 'r', encoding='utf-8') as fp:
-        charts = json.load(fp)
 
     for c in charts.values():
         i = c.get('id', 0)

@@ -1,0 +1,5 @@
+###
+GET https://statmaniax.com/api/users/69420 HTTP/1.1
+
+###
+GET https://statmaniax.com/api/get_user_highscores_info/521/full HTTP/1.1

@@ -21,7 +21,7 @@ from enum import IntEnum
 from dataclasses import dataclass, field
 from typing import List
 
-_VERSION = 'v0.973'
+_VERSION = 'v1.1'
 _VERBAL = False
 _VISUAL = False
 
@@ -54,8 +54,6 @@ class Clear(IntEnum):
 
 @dataclass
 class Score:
-    SCORE_SCALAR = 0.0001
-
     s_id: int = -1
     e_id: int = -1
     plays: int = 1
@@ -63,7 +61,10 @@ class Score:
     clear: Clear = Clear.PASS
     value: float = 0
     
-    def __init__(self, data):
+    def __init__(self, data: dict = None):
+        if data is None:
+            return
+                
         last_played = data.get('last_played')
         if isinstance(last_played, str):
             last_played = dt.strptime(last_played, '%Y-%m-%dT%H:%M:%S.%f')
@@ -141,6 +142,12 @@ class Song:
     def __init__(self, data: dict = None):
         if data is None:
             return
+        
+        try:
+            self = Song.load(data)
+            return
+        except Exception as e:
+            pass
 
         try:
             self.s_id = data['song_id']
@@ -199,6 +206,7 @@ class Song:
         obj = cls()
         for fn in ['s_id', 'hash', 'title', 'subtitle', 'artist', 'meter', 'style', 'slot', 'value', 'spice']:
             setattr(obj, fn, data[fn])
+        obj.scores = data.get('scores', {})
         return obj
 
     def __str__(self):
@@ -218,7 +226,7 @@ class Song:
 
 @dataclass
 class Player:
-    name: str
+    name: str = ""
     e_id: int = -1
     g_id: int = -1
     scores: dict = field(default_factory=dict)      # s_id: Score
@@ -231,6 +239,12 @@ class Player:
     def __init__(self, data: dict = None):
         if data is None:
             return
+        
+        try:
+            self = Player.load(data)
+            return
+        except Exception as e:
+            pass
 
         try:
             self.name = data['members_name']
@@ -305,6 +319,9 @@ class Relationship:
         obj.strength = data['strength']
         return obj
 
+    @property
+    def key_title(self):
+        return f"{self.x.s_id},{self.y.s_id}"
 
     def pair_title(self):
         return f"{self.x} & {self.y}"
@@ -364,9 +381,9 @@ class Relationship:
         y_col = ex_matrix_lfit1[1, :]
 
         if ex_matrix_lfit1.shape[1] < Relationship.MIN_COMMON_PLAYERS:
-            min_score_check = (1 - Relationship.MAX_NEG_LIMIT) / Score.SCORE_SCALAR
-            max_score_check = (1 - Relationship.MIN_NEG_LIMIT) / Score.SCORE_SCALAR
-            raise ValueError(f'Not enough scores between {min_score_check:0.0f} and {max_score_check:0.0f} to relate {self.compare_title()} ({len(self.e_common)} players, need {Relationship.MIN_COMMON_PLAYERS})')
+            min_score_check = (1 - Relationship.MAX_NEG_LIMIT) / Tournament.SCORE_SCALAR
+            max_score_check = (1 - Relationship.MIN_NEG_LIMIT) / Tournament.SCORE_SCALAR
+            raise ValueError(f'Not enough scores between {min_score_check:0.4f} and {max_score_check:0.4f} to relate {self.compare_title()} ({len(self.e_common)} players, need {Relationship.MIN_COMMON_PLAYERS})')
         
         # slope of line thru 0 as a starting point?
         a = x_col
@@ -397,11 +414,12 @@ class Relationship:
             plt.title(f'{self.compare_title()}\nRelation: {self.relation:0.3f}, Strength: {self.strength:0.3f}')
             plt.show()
             plt.close('all')
-        
+
 
 
 @dataclass
 class Tournament:
+    SCORE_SCALAR = 0.0001                           # Scale scores to be out of unity
     MONO_THRESHOLD = 0.999999                       # Monotonicity check
     MIN_COMMON_PLAYERS = 6                          # For ordering purposes
     ITERATIONS_MONOTONIC_SORT = 10                  # Bubble sort for correlation factor monotonicity
@@ -417,7 +435,7 @@ class Tournament:
 
     players: dict = field(default_factory=dict)         # e_id: Player
     songs: dict = field(default_factory=dict)           # s_id: Song
-    relationships: dict = field(default_factory=dict)   # r.x: {r.y: Relationship}
+    relationships: dict = field(default_factory=dict)   # r.x,r.y: Relationship
     ordering: dict = field(default_factory=dict)        # {style: List[Song]}
 
     def dump(self):
@@ -434,10 +452,8 @@ class Tournament:
                 j['scores'].append(v.dump())
         for p in self.players.values():
             j['players'].append(p.dump())
-        for x, y_dict in self.relationships.items():
-            for y, r in y_dict.items():
-                if r.relation is not None:
-                    j['relationships'].append(r.dump())
+        for r_key, r in self.relationships.items():
+            j['relationships'].append(r.dump())
         for style in self.ordering:
             j['ordering'][style] = [s.s_id for s in self.ordering[style]]
 
@@ -466,9 +482,7 @@ class Tournament:
                     obj.players[v.e_id].scores = {v.s_id: v}
         for r_data in data['relationships']:
             r = Relationship.load(r_data, obj.songs)
-            if r.x.s_id not in obj.relationships:
-                obj.relationships[r.x.s_id] = {}
-            obj.relationships[r.x.s_id][r.y.s_id] = r
+            obj.relationships[r.key_title] = r
 
         ordering_data = data['ordering']
         if isinstance(ordering_data, list):
@@ -514,14 +528,14 @@ class Tournament:
 
     def load_score_data(self, score_data: list, assign_to_player: bool = True):
         for s_data in score_data:
-            try:
+            if 'song_id' in s_data:
                 s = Score(data={
                     's_id': s_data['song_id'],
                     'e_id': s_data['entrant_id'],
                     'clear': Clear(s_data['score_best_clear_type']),
-                    'value': 1 - s_data['score_ex'] * Score.SCORE_SCALAR
+                    'value': 1 - s_data['score_ex'] * Tournament.SCORE_SCALAR
                 })
-            except:
+            elif 'chartId' in s_data:
                 if 'lastUpdated' in s_data:
                     s_dt = dt.strptime(s_data['lastUpdated'], '%Y-%m-%dT%H:%M:%S.%fZ')
                 else:
@@ -532,8 +546,10 @@ class Tournament:
                     'plays': s_data.get('totalPasses', 1),
                     'last_played': s_dt,
                     'clear': Clear(s_data.get('clearType', 1)),
-                    'value': 1 - s_data['ex'] * Score.SCORE_SCALAR
+                    'value': 1 - s_data['ex'] * Tournament.SCORE_SCALAR
                 })
+            else:
+                s = Score.load(s_data)
 
             if s.s_id in self.songs:
                 self.songs[s.s_id].scores[s.e_id] = s
@@ -541,16 +557,20 @@ class Tournament:
                 self.players[s.e_id].scores[s.s_id] = s
 
     def setup_relationships(self):
-        for x in self.songs:
-            prev = [y for y in self.relationships]
-            self.relationships[x] = {}
+        song_ids = list(self.songs.keys())
+        for i, x in enumerate(song_ids):
+            prev = song_ids[:i]
             for y in prev:
-                self.relationships[x][y] = Relationship(self.songs[x], self.songs[y])
-                self.relationships[y][x] = Relationship(self.songs[y], self.songs[x])
+                if self.songs[x].style == self.songs[y].style:
+                    r = Relationship(self.songs[x], self.songs[y])
+                    self.relationships[r.key_title] = r
+                    r = Relationship(self.songs[y], self.songs[x])
+                    self.relationships[r.key_title] = r
+            print(f"::: Relationships set up for {i+1} songs")
 
     def calc_relationships(self, verbal=_VERBAL):
         successes = 0
-        rel_list = [r for x, y_dict in self.relationships.items() for y, r in y_dict.items()]
+        rel_list = [r for r_key, r in self.relationships.items()]
         for i, r in enumerate(rel_list):
             try:
                 r.calc_relationship()
@@ -566,7 +586,7 @@ class Tournament:
 
     def calc_relationship_safe(self, index: int, a: Song, b: Song, verbal=_VERBAL):
         try:
-            r = self.relationships[a][b]
+            r = self.relationships[Relationship(a, b).key_title]
             r.calc_relationship()
             if verbal:
                 print(f'--- {index:6d} {r}')
@@ -693,22 +713,41 @@ class Tournament:
             r.relation = 1.0
             r.strength = len(r.e_common)
             return r
-        if x.s_id not in self.relationships:
-            raise ValueError(f'No relationships originating from {x}')
-        if y.s_id not in self.relationships[x.s_id]:
-            if not allow_link:
-                raise ValueError(f'No relationship for {y} vs. {x}')
-            # Allow transitive relationship extension...
-            potential_links = []
-            for z_id in self.relationships[x.s_id]:
-                if y.s_id in self.relationships[z_id]:
-                    potential_links.append(Tournament.link_through(self.relationships[x.s_id][z_id], self.relationships[z_id][y.s_id]))
-            if len(potential_links) < 1:
-                raise ValueError(f'No relationship for {y} vs. {x}, even with linking!')
-            potential_links.sort(key=lambda r: r.strength)
-            return potential_links[-1]
+        
+        if x.style != y.style:
+            raise ValueError(f'Not comparing {x.style} (#{x.s_id}) and {y.style} (#{y.s_id}) charts')
+        
+        r_key = Relationship(x, y)
+        if r_key.key_title in self.relationships:
+            return self.relationships[r_key.key_title]
+        
+        r_key_rev = Relationship(y, x)
+        if r_key_rev.key_title in self.relationships:
+            r_rev = self.relationships[r_key_rev.key_title]
+            if r_rev.relation is None:
+                return r_key_rev
+            r_key_rev.relation = 1 / r_rev.relation
+            r_key_rev.e_common = r_rev.e_common
+            r_key_rev.strength = r_rev.strength
+            return r_key_rev
 
-        return self.relationships[x.s_id][y.s_id]
+        if not allow_link:
+            raise ValueError(f'No relationship for {r_key.compare_title()}')
+        # Allow transitive relationship extension...
+        potential_links = []
+        for z in self.songs:
+            try:
+                xz = self.relationship_lookup(x, z)
+                zy = self.relationship_lookup(z, y)
+                potential_links.append(Tournament.link_through(self.relationships[xz], self.relationships[zy]))
+            except:
+                # One of the links doesn't exist.
+                pass
+        if len(potential_links) < 1:
+            raise ValueError(f'No relationship for {r_key.compare_title()}, even with linking!')
+        potential_links.sort(key=lambda r: r.strength)
+        return potential_links[-1]
+    
 
     def view_monotonicity(self, style='Single', verbal=_VERBAL, visual=_VISUAL):
         order_progressive_rel = []
@@ -730,7 +769,7 @@ class Tournament:
         # Sort the relationships.
         # Only use upward-directional pairs
         # (i.e., second song is harder than the first)
-        song_similarity = [r for x, y_dict in self.relationships.items() for y, r in y_dict.items() if
+        song_similarity = [r for r_key, r in self.relationships.items() if
             (r.relation is not None) and
             (len(r.e_common) >= Tournament.MIN_COMMON_PLAYERS) and
             (r.x.style == style and r.y.style == style)
@@ -1165,7 +1204,10 @@ def load_json_data(root='itl_data', jit=False):
     for fn in song_files:
         with open(fn, 'r') as fp:
             song_data = json.load(fp)
-            s = Song(song_data['song'])
+            try:
+                s = Song.load(song_data['song'])
+            except Exception as e:
+                s = Song(song_data['song'])
             tourney.songs[s.s_id] = s
             del song_data
 
@@ -1174,7 +1216,10 @@ def load_json_data(root='itl_data', jit=False):
     for fn in player_files:
         with open(fn, 'r') as fp:
             player_data = json.load(fp)
-            p = Player(player_data['entrant'])
+            try:
+                p = Player.load(player_data['entrant'])
+            except Exception as e:
+                p = Player(player_data['entrant'])
             tourney.players[p.e_id] = p
             del player_data
 
@@ -1215,6 +1260,16 @@ def process(src='itl2024', force_recalculate_spice: bool = False):
         latest_itl2024 = sorted([d for d in os.listdir('itl2024_data') if re.match('^\d+$', d)])[-1]
         scrape_designator = '_' + latest_itl2024
         root = os.path.join('itl2024_data', latest_itl2024)
+    elif src == 'gs':
+        # Personally scraped
+        jit = False
+        latest_gs = sorted([d for d in os.listdir('gs_data') if re.match('^\d+$', d)])[-1]
+        scrape_designator = '_' + latest_gs
+        root = os.path.join('gs_data', latest_gs)
+        Tournament.SCORE_SCALAR = 1             # huh?
+        Tournament.PERFECT_OFFSET = 0.03        # huh?
+        Relationship.MAX_NEG_LIMIT = 0.2        # huh?
+        Relationship.MIN_NEG_LIMIT = 0.001      # huh?
     elif src == '3ic':
         # Privately provided
         jit = True
@@ -1234,7 +1289,7 @@ def process(src='itl2024', force_recalculate_spice: bool = False):
         if jit:
             tourney.calc_relationships_jit(src='3ic_data/song_scores', verbal=False)
         else:
-            tourney.calc_relationships(verbal=False)
+            tourney.calc_relationships(verbal=True)
         for style in ['Single', 'Double']:
             print(f'======= {style} =========================================================')
             print('=== Setting up closest-neighbor initial order...')
@@ -1266,7 +1321,7 @@ def process(src='itl2024', force_recalculate_spice: bool = False):
             tourney = Tournament.load(json.load(fp))
 
     for style in ['Single', 'Double']:
-        with open(f'{src}_data/pvs_ranking{scrape_designator}.txt', 'w', encoding='utf-8') as fp:
+        with open(f'{src}_data/pvs_ranking{scrape_designator}_{style}.txt', 'w', encoding='utf-8') as fp:
             tourney.view_pvs_ranking(style=style, fp=fp)
     print('========================================================================')
     print('=== Performing scobility calculations...')
