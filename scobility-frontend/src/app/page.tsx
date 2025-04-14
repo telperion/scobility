@@ -425,7 +425,12 @@ export default function Home({params}: { params: {initialPlayerIndex: number} })
     const filtered_scores = filterScores(score_data, style_filter_string);
 
     // Calculate the scobility stats.
-    const scobility_stats = calculateScobility(filtered_scores, playerData.get(selectedPlayerID.toString()), fitAlgorithm);
+    const scobility_stats = calculateScobility(
+      filtered_scores,
+      playerData.get(selectedPlayerID.toString()),
+      selectedCatalog,
+      fitAlgorithm
+    );
 
     // Hydrate the scores using the scobility best-fit approximation.
     // Also sort by last played time so the graph can properly colorize

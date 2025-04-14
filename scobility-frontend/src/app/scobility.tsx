@@ -141,6 +141,7 @@ class ScobilityCoefficients {
 class ScobilityStats {
   entrant_id: bigint = BigInt(-1);
   name: string = "";
+  tourney: string = "ITL2025";
   tourney_power: number = -1;
   coefs: ScobilityCoefficients = new ScobilityCoefficients();
 }
@@ -163,6 +164,8 @@ export interface LoadedChart {
   slot: string;
   style: string | number;
   value: number;
+  value_scoring: number;
+  value_passing: number;
   spice: number;
   spice_calc_time: Date | string;
 }
@@ -188,6 +191,8 @@ export interface ProcessedScore {
   style: string;
   spice: number;
   value: number;
+  value_scoring: number;
+  value_passing: number;
   quality: number;
   relative_quality: number;
   plays: number;
@@ -203,6 +208,87 @@ export interface ProcessedScore {
   recoverable_sp: number;
   recoverable_ep: number;
   recoverable_rp: number;
+}
+
+class ScoringCurve {
+  // SP calculation functions for ITL2023~ITL2025
+  sp_log_base: number;
+  sp_pow_base: number;
+  sp_inflect: number;
+  sp_double_duty: boolean;
+  ep_curve_cutoff: number;
+
+  constructor(tourney: string = "ITL2025") {
+    if (tourney == "ITL2025") {
+      this.sp_log_base = 1;
+      this.sp_pow_base = 40;
+      this.sp_inflect = 40;
+      this.sp_double_duty = false;
+      this.ep_curve_cutoff = 85.0;
+    }
+    else {
+      this.sp_log_base = 1.1032889141348;
+      this.sp_pow_base = 61;
+      this.sp_inflect = 50;
+      this.sp_double_duty = true;
+      this.ep_curve_cutoff = 85.0;
+    }
+  }
+
+  expct_to_sppct = (expct: number) => {
+    // EX % to SP %
+    if (this.sp_double_duty) {
+      const v_lo = expct < this.sp_inflect ? expct : this.sp_inflect;
+      const v_hi = expct > this.sp_inflect ? expct : this.sp_inflect;
+      return (
+        Math.log(v_lo + 1) / Math.log(this.sp_log_base) +
+        Math.pow(this.sp_pow_base, (v_hi - this.sp_inflect) / (100 - this.sp_inflect)) -
+        1
+      );
+    }
+    else {
+      return (
+        100.0 * 
+        (Math.pow(this.sp_pow_base, (expct - this.sp_inflect)) - 1) /
+        (Math.pow(this.sp_pow_base, (100.0 - this.sp_inflect)) - 1)
+      );
+    }
+  };
+  sppct_to_expct = (sppct: number) => {
+    // SP % to EX %
+    if (this.sp_double_duty) {
+      const piecewise_border = Math.log(this.sp_inflect + 1) / Math.log(this.sp_log_base) - 1;
+      if (sppct < piecewise_border) {
+        return Math.pow(this.sp_log_base, sppct) - 1;
+      } else {
+        return (
+          ((100 - this.sp_inflect) * Math.log(sppct - piecewise_border)) /
+            Math.log(this.sp_pow_base) +
+            this.sp_inflect
+        );
+      }
+    }
+    else {
+      const century_scale = 100.0 / (Math.pow(this.sp_pow_base, 100.0 / this.sp_inflect) - 1)
+      return (
+        this.sp_inflect *
+        Math.log(sppct / century_scale + 1) /
+        Math.log(this.sp_pow_base)
+      );
+    }
+  };
+
+  expct_curve = (expct: number) => {
+    // EX % to EP
+    return (
+      (Math.pow(
+        100,
+        (expct < this.ep_curve_cutoff ? 0 : expct - this.ep_curve_cutoff) / (100.0 - this.ep_curve_cutoff)
+      ) -
+        1) *
+      (1000.0 / 99.0)
+    );
+  };
 }
 
 export interface ScobilityDBResponse<T> {
@@ -322,6 +408,8 @@ function transformLoadedScore(
     style: true_style,
     spice: Math.log2(chart_info.spice),
     value: chart_info.value,
+    value_scoring: chart_info.value_scoring,
+    value_passing: chart_info.value_passing,
     quality: Math.log2(chart_info.spice) - Math.log2(perfect_offset - row.score),
     relative_quality: 0,
     plays: row.plays,
@@ -537,52 +625,10 @@ const spice_horizon_fit = (a: Array<number>, b: Array<number>) => {
   return best_fit_so_far;
 };
 
-// SP calculation functions for ITL2023/ITL2024
-const sp_log_base = 1.1032889141348;
-const sp_pow_base = 61;
-const sp_inflect = 50;
-const expct_to_sppct = (expct: number) => {
-  // EX % to SP %
-  const v_lo = expct < 50 ? expct : 50;
-  const v_hi = expct > 50 ? expct : 50;
-
-  return (
-    Math.log(v_lo + 1) / Math.log(sp_log_base) +
-    Math.pow(sp_pow_base, (v_hi - sp_inflect) / (100 - sp_inflect)) -
-    1
-  );
-};
-const sppct_to_expct = (sppct: number) => {
-  // SP % to EX %
-  const piecewise_border = Math.log(sp_inflect + 1) / Math.log(sp_log_base) - 1;
-  if (sppct < piecewise_border) {
-    return Math.pow(sp_log_base, sppct) - 1;
-  } else {
-    return (
-      ((100 - sp_inflect) * Math.log(sppct - piecewise_border)) /
-        Math.log(sp_pow_base) +
-      sp_inflect
-    );
-  }
-};
-
-// EP calculation function for ITL2024
-const ep_curve_cutoff = 85.0;
-const expct_curve = (expct: number) => {
-  // EX % to EP
-  return (
-    (Math.pow(
-      100,
-      (expct < ep_curve_cutoff ? 0 : expct - ep_curve_cutoff) / (100.0 - ep_curve_cutoff)
-    ) -
-      1) *
-    (1000.0 / 99.0)
-  );
-};
-
 const calculateScobility = (
   score_data: ProcessedScore[],
   player_data: LoadedPlayer | undefined,
+  tourney: string = "ITL2025",
   fit_algorithm: boolean = true
 ): ScobilityStats => {
   // List out spice and quality for each played chart.
@@ -606,6 +652,7 @@ const calculateScobility = (
     return {
       entrant_id: player_data?.entrant_id ?? BigInt(-1),
       name: player_data?.name ?? "[n/a]",
+      tourney: tourney,
       tourney_power: tourney_power,
       coefs: coefs,
     };
@@ -632,6 +679,7 @@ const calculateScobility = (
     return {
       entrant_id: player_data?.entrant_id ?? BigInt(-1),
       name: player_data?.name ?? "[n/a]",
+      tourney: tourney,
       tourney_power: tourney_power,
       coefs: coefs,
     };
@@ -642,16 +690,36 @@ const sp_hand_size_map = new Map([
   ["dance-single", 75],
   ["dance-double", 50],
 ]);
-const ep_hand_size_map = new Map([
-  [7, 1],
-  [8, 2],
-  [9, 3],
-  [10, 4],
-  [11, 4],
-  [12, 3],
-  [13, 2],
-  [14, 1],
-]);
+function select_ep_hand_size_map(
+  tourney: string = "ITL2025",
+  style_filter: string = "dance-single"
+) {
+  if (tourney == "ITL2025" && style_filter == "dance-single") {
+    return new Map([
+      [7, 1],
+      [8, 2],
+      [9, 3],
+      [10, 4],
+      [11, 5],
+      [12, 4],
+      [13, 3],
+      [14, 2],
+      [15, 1],
+    ]);
+  }
+  else {
+    return new Map([
+      [7, 1],
+      [8, 2],
+      [9, 3],
+      [10, 4],
+      [11, 4],
+      [12, 3],
+      [13, 2],
+      [14, 1],
+    ]);
+  }
+}
 
 function hydrateProcessedScores(
   score_data: ProcessedScore[],
@@ -661,24 +729,27 @@ function hydrateProcessedScores(
   // Start by calculating target score and current/achievable SP/EP.
   for (let row of score_data) {
     // TODO: double-check this math
+    const scoring_curve = new ScoringCurve(scobility.tourney);
     row.relative_quality = row.quality - scobility.coefs.quality_fit(row.spice);
     row.target_score = scobility.coefs.targetFromSpice(row.spice);
     row.target_sp =
       row.target_score > 0.99999
         ? row.value
         : Math.floor(
-            (expct_to_sppct(row.target_score * 100) * row.value) / 100
-          );
+            (scoring_curve.expct_to_sppct(row.target_score * 100) * row.value_scoring) / 100
+          ) + row.value_passing;
     row.current_sp =
       row.score > 0.99999
         ? row.value
-        : Math.floor((expct_to_sppct(row.score * 100) * row.value) / 100);
+        : Math.floor(
+          (scoring_curve.expct_to_sppct(row.score * 100) * row.value_scoring) / 100
+        ) + row.value_passing;
     row.target_ep =
       row.target_score > 0.99999
         ? 1000
-        : Math.floor(expct_curve(row.target_score * 100));
+        : Math.floor(scoring_curve.expct_curve(row.target_score * 100));
     row.current_ep =
-      row.score > 0.99999 ? 1000 : Math.floor(expct_curve(row.score * 100));
+      row.score > 0.99999 ? 1000 : Math.floor(scoring_curve.expct_curve(row.score * 100));
   }
 
   // Understand which charts contribute SP and EP to the player's ranking points.
@@ -703,6 +774,7 @@ function hydrateProcessedScores(
   // console.log(sp_cutoff);
 
   // EP is a little more difficult - the chart's meter has an effect on whether the chart has the opportunity to contribute or not.
+  const ep_hand_size_map = select_ep_hand_size_map(scobility.tourney, style_filter)
   const ranked_by_current_ep = score_data.toSorted(
     (a, b) => b.current_ep - a.current_ep
   ); // descending order

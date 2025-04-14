@@ -29,6 +29,8 @@ class Chart(BaseModel):
     slot: Union[str, None]
     style: Union[str, None]
     value: Union[float, None]
+    value_scoring: Union[float, None]
+    value_passing: Union[float, None]
     spice: Union[float, None]
     spice_calc_time: Union[dt, None]
 

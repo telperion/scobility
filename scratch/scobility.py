@@ -21,7 +21,7 @@ from enum import IntEnum
 from dataclasses import dataclass, field
 from typing import List
 
-_VERSION = 'v1.1'
+_VERSION = 'v1.2'
 _VERBAL = False
 _VISUAL = False
 
@@ -136,6 +136,8 @@ class Song:
     style: str = 'Single'
     slot: str = 'Challenge'
     value: float = 0                                # if the tourney specifies varying point values for charts
+    value_scoring: float = 0                        # if the tourney distinguishes between passing and scoring points
+    value_passing: float = 0                        # if the tourney distinguishes between passing and scoring points
     scores: dict = field(default_factory=dict)      # e_id: Score
     spice: float = None                             # Not a Dune reference. capsaicin not cinnamon
 
@@ -152,7 +154,7 @@ class Song:
         try:
             self.s_id = data['song_id']
             self.hash = data['song_hash']
-            self.value = data['song_points']
+            self.value_scoring = data['song_points']
 
             r = data['song_title_romaji'].strip()
             self.title = data['song_title'] + ((r != '') and f' ({r})' or '')
@@ -170,6 +172,8 @@ class Song:
             self.s_id = data['id']
             self.hash = data['hash']
             self.value = data['points']
+            self.value_scoring = data.get('pointsScoring', self.value)
+            self.value_passing = data.get('pointsPassing', 0)
 
             r = data['titleRomaji'].strip()
             self.title = data['title'] + ((r != '') and f' ({r})' or '')
@@ -198,19 +202,22 @@ class Song:
             'style': self.style,
             'slot': self.slot,
             'value': self.value,
+            'value_scoring': self.value_scoring,
+            'value_passing': self.value_passing,
             'spice': self.spice
         }
 
     @classmethod
     def load(cls, data):
         obj = cls()
-        for fn in ['s_id', 'hash', 'title', 'subtitle', 'artist', 'meter', 'style', 'slot', 'value', 'spice']:
+        for fn in ['s_id', 'hash', 'title', 'subtitle', 'artist', 'meter', 'style', 'slot', 'value', 'value_scoring', 'value_passing', 'spice']:
             setattr(obj, fn, data[fn])
         obj.scores = data.get('scores', {})
         return obj
 
     def __str__(self):
-        return f"#{self.s_id} {self.full_title} ({self.style} {self.slot} {self.meter}) ({self.value} max pts.)"
+        return f"#{self.s_id} {self.full_title} ({self.style} {self.slot} {self.meter}) " + \
+            f"({self.value_passing} passing + {self.value_scoring} scoring = {self.value_passing + self.value_scoring} max pts.)"
 
     @property
     def full_title(self):
@@ -1260,6 +1267,12 @@ def process(src='itl2024', force_recalculate_spice: bool = False):
         latest_itl2024 = sorted([d for d in os.listdir('itl2024_data') if re.match('^\d+$', d)])[-1]
         scrape_designator = '_' + latest_itl2024
         root = os.path.join('itl2024_data', latest_itl2024)
+    elif src == 'itl2025':
+        # Personally scraped
+        jit = False
+        latest_itl2025 = sorted([d for d in os.listdir('itl2025_data') if re.match('^\d+$', d)])[-1]
+        scrape_designator = '_' + latest_itl2025
+        root = os.path.join('itl2025_data', latest_itl2025)
     elif src == 'gs':
         # Personally scraped
         jit = False
@@ -1357,5 +1370,5 @@ def process(src='itl2024', force_recalculate_spice: bool = False):
 
 
 if __name__ == '__main__':
-    process(src='itl2024', force_recalculate_spice=True)
+    process(src='itl2025', force_recalculate_spice=True)
     
