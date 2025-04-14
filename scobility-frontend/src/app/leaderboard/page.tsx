@@ -129,7 +129,7 @@ const score_quality_columns: TableColumnsType<ScoreQualityRank> = [
 ];
 
 export default function Page() {
-const [selectedCatalog, setSelectedCatalog] = useState("ITL2024");
+const [selectedCatalog, setSelectedCatalog] = useState("ITL2025");
 const [styleFilter, setStyleFilter] = useState(true);
   const [scobilityRankData, setScobilityRankData] = useState(
     new Array<ScobilityRank>()

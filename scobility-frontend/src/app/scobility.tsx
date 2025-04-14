@@ -249,8 +249,8 @@ class ScoringCurve {
     else {
       return (
         100.0 * 
-        (Math.pow(this.sp_pow_base, (expct - this.sp_inflect)) - 1) /
-        (Math.pow(this.sp_pow_base, (100.0 - this.sp_inflect)) - 1)
+        (Math.pow(this.sp_pow_base, (expct / this.sp_inflect)) - 1) /
+        (Math.pow(this.sp_pow_base, (100.0 / this.sp_inflect)) - 1)
       );
     }
   };
