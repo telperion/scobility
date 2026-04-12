@@ -21,7 +21,7 @@ from enum import IntEnum
 from dataclasses import dataclass, field
 from typing import List
 
-_VERSION = 'v1.2'
+_VERSION = 'v1.3'
 _VERBAL = False
 _VISUAL = False
 

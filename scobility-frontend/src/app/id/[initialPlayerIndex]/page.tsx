@@ -1,7 +1,12 @@
-"use client";
+import { ScobilityHome } from "../../home";
 
-import Home from '../../page';
-
-export default function Page({params}: { params: {initialPlayerIndex: number}}) {
-    return Home({params});
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ initialPlayerIndex: string }>;
+}) {
+  const { initialPlayerIndex } = await params;
+  return (
+    <ScobilityHome initialPlayerIndex={Number(initialPlayerIndex)} />
+  );
 }
