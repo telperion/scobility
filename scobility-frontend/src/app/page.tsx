@@ -330,7 +330,7 @@ const onChange: TableProps<ProcessedScore>["onChange"] = (
 
 export default function Home({params}: { params: {initialPlayerIndex: number} }) {
   const mounted = useRef(false);
-  const [selectedCatalog, setSelectedCatalog] = useState("ITL2025");
+  const [selectedCatalog, setSelectedCatalog] = useState("ITL2026");
 
   const [playerData, setPlayerData] = useState(new Map<string, LoadedPlayer>(
     Array(10)

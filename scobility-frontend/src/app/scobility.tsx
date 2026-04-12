@@ -141,7 +141,7 @@ class ScobilityCoefficients {
 class ScobilityStats {
   entrant_id: bigint = BigInt(-1);
   name: string = "";
-  tourney: string = "ITL2025";
+  tourney: string = "ITL2026";
   tourney_power: number = -1;
   coefs: ScobilityCoefficients = new ScobilityCoefficients();
 }
@@ -211,15 +211,15 @@ export interface ProcessedScore {
 }
 
 class ScoringCurve {
-  // SP calculation functions for ITL2023~ITL2025
+  // SP calculation functions for ITL2023~ITL2026
   sp_log_base: number;
   sp_pow_base: number;
   sp_inflect: number;
   sp_double_duty: boolean;
   ep_curve_cutoff: number;
 
-  constructor(tourney: string = "ITL2025") {
-    if (tourney == "ITL2025") {
+  constructor(tourney: string = "ITL2026") {
+    if (tourney == "ITL2025" || tourney == "ITL2026") {
       this.sp_log_base = 1;
       this.sp_pow_base = 40;
       this.sp_inflect = 40;
@@ -391,7 +391,8 @@ function transformLoadedScore(
   }
 
   // HACK? my dumbass didn't populate this field correctly in the database
-  const true_style = row.chart_id > 400 ? "dance-double" : "dance-single";
+  // const true_style = row.chart_id > 400 ? "dance-double" : "dance-single";
+  const true_style = "dance-" + chart_info.style.toString().toLowerCase();
 
   return {
     key: row.chart_id,
@@ -628,12 +629,13 @@ const spice_horizon_fit = (a: Array<number>, b: Array<number>) => {
 const calculateScobility = (
   score_data: ProcessedScore[],
   player_data: LoadedPlayer | undefined,
-  tourney: string = "ITL2025",
+  tourney: string = "ITL2026",
   fit_algorithm: boolean = true
 ): ScobilityStats => {
   // List out spice and quality for each played chart.
-  const spice_values = score_data.map((row) => row.spice);
-  const quality_values = score_data.map((row) => row.quality);
+  const score_data_spiced = score_data.filter((row) => row.spice >= 0);
+  const spice_values = score_data_spiced.map((row) => row.spice);
+  const quality_values = score_data_spiced.map((row) => row.quality);
 
   // Tourney power rating (this is kinda spitballed I might adjust later)
   const tourney_power =
@@ -691,9 +693,36 @@ const sp_hand_size_map = new Map([
   ["dance-double", 50],
 ]);
 function select_ep_hand_size_map(
-  tourney: string = "ITL2025",
+  tourney: string = "ITL2026",
   style_filter: string = "dance-single"
 ) {
+  if (tourney == "ITL2026") {
+    // EXscalator!! (it's a trapezoid instead of a pyramid now)
+    if (style_filter == "dance-single") {
+      return new Map([
+        [7, 5],
+        [8, 5],
+        [9, 5],
+        [10, 5],
+        [11, 5],
+        [12, 4],
+        [13, 3],
+        [14, 2],
+        [15, 1],
+      ]);
+    } else {
+      return new Map([
+        [7, 5],
+        [8, 5],
+        [9, 5],
+        [10, 5],
+        [11, 4],
+        [12, 3],
+        [13, 2],
+        [14, 1],
+      ]);
+    }
+  }
   if (tourney == "ITL2025" && style_filter == "dance-single") {
     return new Map([
       [7, 1],

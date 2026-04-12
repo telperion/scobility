@@ -49,7 +49,7 @@ def scrape_charts(path_dst: str, tourney: str = default_tourney):
         if not j.get('success', False):
             logging.warning(f"{i:4d}: {j.get('message', '')}")
             strikes.append(i)
-            if len(strikes) > 5:
+            if len(strikes) > 100:
                 break
         else:
             strikes = []
@@ -79,7 +79,7 @@ def scrape_entrants(path_dst: str, tourney: str = default_tourney):
         if not j.get('success', False):
             logging.warning(f"{i:4d}: {j.get('message', '')}")
             strikes.append(i)
-            if len(strikes) > 5:
+            if len(strikes) > 20:
                 break
         else:
             strikes = []
@@ -145,7 +145,7 @@ def scrape_scores(path_dst: str, tourney: str = default_tourney):
         if not j.get('success', False):
             logging.warning(f"{i:4d} (hash {c['hash']}): {j.get('message', '')}")
             strikes.append(i)
-            if len(strikes) > 5:
+            if len(strikes) > 20:
                 break
         else:
             strikes = []

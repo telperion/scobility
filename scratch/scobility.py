@@ -1273,6 +1273,12 @@ def process(src='itl2024', force_recalculate_spice: bool = False):
         latest_itl2025 = sorted([d for d in os.listdir('itl2025_data') if re.match('^\d+$', d)])[-1]
         scrape_designator = '_' + latest_itl2025
         root = os.path.join('itl2025_data', latest_itl2025)
+    elif src == 'itl2026':
+        # Personally scraped
+        jit = False
+        latest_itl2026 = sorted([d for d in os.listdir('itl2026_data') if re.match('^\d+$', d)])[-1]
+        scrape_designator = '_' + latest_itl2026
+        root = os.path.join('itl2026_data', latest_itl2026)
     elif src == 'gs':
         # Personally scraped
         jit = False
@@ -1370,5 +1376,5 @@ def process(src='itl2024', force_recalculate_spice: bool = False):
 
 
 if __name__ == '__main__':
-    process(src='itl2025', force_recalculate_spice=True)
+    process(src='itl2026', force_recalculate_spice=True)
     
