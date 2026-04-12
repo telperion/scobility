@@ -2,7 +2,7 @@
   "name": "scobility-frontend",
   "version": "0.3.0",
   "engines": {
-    "node": "24"
+    "node": "22"
   },
   "private": true,
   "scripts": {
