@@ -39,7 +39,7 @@ def scrape_charts(path_dst: str, tourney: str = default_tourney):
     charts = {}
     strikes = []
     for i in range(10000):
-        sleep(1)
+        sleep(0.5)
         try:
             r = requests.get(f'https://{tourney}.groovestats.com/api/chart/{i}')
             j = r.json()
@@ -69,7 +69,7 @@ def scrape_entrants(path_dst: str, tourney: str = default_tourney):
     entrants = {}
     strikes = []
     for i in range(10000):
-        sleep(1)
+        sleep(0.5)
         try:
             r = requests.get(f'https://{tourney}.groovestats.com/api/entrant/{i}')
             j = r.json()
@@ -126,7 +126,7 @@ def scrape_scores(path_dst: str, tourney: str = default_tourney):
         i = c.get('id', 0)
 
         for retries in range(5):
-            sleep(1)
+            sleep(0.5)
             try:
                 r = requests.post(
                     f'https://{tourney}.groovestats.com/api/score/chartTopScores',
