@@ -1,0 +1,27 @@
+{
+  "name": "scobility-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cli": "tsx src/cli.ts",
+    "db-init": "tsx src/cli.ts db-init",
+    "ingest-catalog": "tsx src/cli.ts ingest-catalog",
+    "recalc-spice": "tsx src/cli.ts recalc-spice",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.5",
+    "ml-matrix": "^6.12.1",
+    "mssql": "^11.0.1"
+  },
+  "devDependencies": {
+    "@types/mssql": "^12.3.0",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
