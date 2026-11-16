@@ -22,6 +22,7 @@ import {
   ScobilityStats,
   loadPlayerData_test,
   loadScoreData_test,
+  loadCatalogMetadata,
   loadSpiceData,
   transformLoadedScore,
   filterScores,
@@ -363,6 +364,7 @@ export function ScobilityHome({
   const [scobilityStats, setScobilityStats] = useState(new ScobilityStats());
 
   const loadCatalog = async () => {
+    await loadCatalogMetadata(selectedCatalog);
     loadSpiceData(selectedCatalog).then((response: ScobilityDBResponse<LoadedChart>) => {
       // console.log(response);
       setSpiceData(response.data);

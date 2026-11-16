@@ -5,6 +5,7 @@ import {
   ScobilityStats,
   loadPlayerData_test,
   loadScoreData_test,
+  loadCatalogMetadata,
   loadSpiceData,
   transformLoadedScore,
   filterScores,
@@ -139,6 +140,7 @@ const [styleFilter, setStyleFilter] = useState(true);
   );
 
   const loadAllData = async () => {
+    await loadCatalogMetadata(selectedCatalog);
     const spice_data = await loadSpiceData(selectedCatalog).then((response: ScobilityDBResponse<LoadedChart>) => {
         return response.data;
     });

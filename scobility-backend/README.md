@@ -51,3 +51,9 @@ npm run recalc-spice -- --target production --catalog ITL2026
 ```bash
 npm test
 ```
+
+Includes weighted-slope (`lstsq`) parity with the NumPy through-origin formula, a synthetic spice pipeline golden test, and a spot-check against `spice_ranking_ITL2026_single.csv` from `--echo`.
+
+## Azure API (player fit)
+
+`function_app.py` no longer serves linear player scobility or target scores (`410 Gone`). Player fit (v2024 piecewise model) runs in the frontend; the API exposes catalog metadata, charts/spice, scores, and player names only.

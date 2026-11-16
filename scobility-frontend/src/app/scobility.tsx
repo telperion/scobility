@@ -3,9 +3,44 @@
 
 import fetch from "node-fetch";
 
-// Internal spice calculation parameter that also plays a part in
-// achievable score predictions
-const perfect_offset = 1.003
+/** Catalog params from GET /catalog/{name}; drives score quality and targets. */
+export interface LoadedCatalogMeta {
+  catalog_id: number;
+  name: string;
+  perfect_offset: number;
+  perfect_score: number | null;
+}
+
+/** 1 + catalog.perfect_offset — matches legacy 1.003 for ITL (offset 0.003). */
+let catalogPerfectOffsetSum = 1.003;
+let catalogPerfectScore: number | null = 10000;
+
+export function setCatalogParams(meta: LoadedCatalogMeta): void {
+  catalogPerfectOffsetSum = 1 + meta.perfect_offset;
+  catalogPerfectScore = meta.perfect_score;
+}
+
+/** Score quality in log-spice space (higher = better). DB score is 1 - value. */
+export function scoreQualityFromDb(
+  logSpice: number,
+  dbScore: number
+): number {
+  const pMin = Math.log2(catalogPerfectOffsetSum);
+  if (
+    catalogPerfectScore != null &&
+    catalogPerfectScore > 0 &&
+    dbScore >= 1
+  ) {
+    const rescaled = 1 - dbScore / catalogPerfectScore;
+    const pScore = Math.log2(metaPerfectOffset() + rescaled) - pMin;
+    return logSpice - pScore;
+  }
+  return logSpice - Math.log2(catalogPerfectOffsetSum - dbScore);
+}
+
+function metaPerfectOffset(): number {
+  return catalogPerfectOffsetSum - 1;
+}
 
 class ScobilityCoefficients {
   version: number = 2024.5;
@@ -23,7 +58,9 @@ class ScobilityCoefficients {
   }
 
   targetFromSpice(spice: number) {
-    const target = perfect_offset - Math.pow(2, spice - this.quality_fit(spice));
+    const target =
+      catalogPerfectOffsetSum -
+      Math.pow(2, spice - this.quality_fit(spice));
     return target < 0 ? 0 : target > 1 ? 1 : target;
   }
 
@@ -304,6 +341,28 @@ function no_db_response<T>(): ScobilityDBResponse<T> {
   };
 }
 
+async function loadCatalogMetadata(catalog: string): Promise<boolean> {
+  try {
+    const response = await fetch(
+      `https://scobility.azurewebsites.net/catalog/${catalog}`
+    );
+    if (!response.ok) {
+      throw new Error(response.statusText);
+    }
+    const body = (await response.json()) as {
+      status: boolean;
+      data?: LoadedCatalogMeta;
+    };
+    if (body.status && body.data?.perfect_offset != null) {
+      setCatalogParams(body.data);
+      return true;
+    }
+  } catch (error) {
+    console.error("Error loading catalog metadata: ", error);
+  }
+  return false;
+}
+
 async function loadSpiceData(catalog: string): Promise<ScobilityDBResponse<LoadedChart>> {
   return fetch(
     `https://scobility.azurewebsites.net/catalog/${catalog}/chart/all/detail/all`
@@ -390,9 +449,16 @@ function transformLoadedScore(
     return null;
   }
 
-  // HACK? my dumbass didn't populate this field correctly in the database
-  // const true_style = row.chart_id > 400 ? "dance-double" : "dance-single";
+  if (
+    chart_info.spice == null ||
+    !Number.isFinite(chart_info.spice) ||
+    chart_info.spice <= 0
+  ) {
+    return null;
+  }
+
   const true_style = "dance-" + chart_info.style.toString().toLowerCase();
+  const logSpice = Math.log2(chart_info.spice);
 
   return {
     key: row.chart_id,
@@ -407,11 +473,11 @@ function transformLoadedScore(
     meter: chart_info.meter,
     score: row.score,
     style: true_style,
-    spice: Math.log2(chart_info.spice),
+    spice: logSpice,
     value: chart_info.value,
     value_scoring: chart_info.value_scoring,
     value_passing: chart_info.value_passing,
-    quality: Math.log2(chart_info.spice) - Math.log2(perfect_offset - row.score),
+    quality: scoreQualityFromDb(logSpice, row.score),
     relative_quality: 0,
     plays: row.plays,
     last_played: typeof(row.last_played) == "string" ? new Date(row.last_played) : row.last_played,
@@ -610,7 +676,7 @@ const spice_horizon_fit = (a: Array<number>, b: Array<number>) => {
           horizon_quality: best_fit_here_r.c0,
           mild_slope: best_fit_here_r.c1_l,
           hot_slope: best_fit_here_r.c1_r,
-          timing_power: best_fit_here_l.c0 - best_fit_here_l.c1_l * a[j],
+          timing_power: best_fit_here_r.c0 - best_fit_here_r.c1_l * a[j + 1],
           residual: best_fit_here_r.residual,
         });
       }
@@ -633,7 +699,9 @@ const calculateScobility = (
   fit_algorithm: boolean = true
 ): ScobilityStats => {
   // List out spice and quality for each played chart.
-  const score_data_spiced = score_data.filter((row) => row.spice >= 0);
+  const score_data_spiced = score_data.filter(
+    (row) => Number.isFinite(row.spice) && row.spice >= 0
+  );
   const spice_values = score_data_spiced.map((row) => row.spice);
   const quality_values = score_data_spiced.map((row) => row.quality);
 
@@ -864,6 +932,7 @@ function hydrateProcessedScores(
 }
 
 export {
+  loadCatalogMetadata,
   loadSpiceData,
   loadPlayerData_test,
   loadScoreData_test,

@@ -19,6 +19,13 @@ const BY_NAME: Record<string, Partial<CatalogRuntimeConfig>> = {
   ITL2024: { tourneyHost: "itl2024" },
   ITL2025: { tourneyHost: "itl2025" },
   ITL2026: { tourneyHost: "itl2026" },
+  StepManiaX: {
+    tourneyHost: "gs",
+    scoreScalar: 1,
+    perfectOffset: 0.03,
+    relationshipMaxNegLimit: 0.2,
+    relationshipMinNegLimit: 0.001,
+  },
   GS: {
     tourneyHost: "gs",
     scoreScalar: 1,

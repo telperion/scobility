@@ -5,6 +5,8 @@ export interface SpiceUpdate {
   spice: number;
 }
 
+const BATCH = 500;
+
 export async function writeSpiceUpdates(
   pool: sql.ConnectionPool,
   catalogId: number,
@@ -19,21 +21,36 @@ export async function writeSpiceUpdates(
   const tx = new sql.Transaction(pool);
   await tx.begin();
   try {
-    let n = 0;
-    for (const u of updates) {
-      await new sql.Request(tx)
-        .input("spice", u.spice)
-        .input("ts", spiceCalcTime)
-        .input("id", u.global_chart_id)
-        .input("catalogId", catalogId)
-        .query(
-          `UPDATE Chart SET spice = @spice, spice_calc_time = @ts
-           WHERE global_chart_id = @id AND catalog_id = @catalogId`
-        );
-      n++;
+  const req = new sql.Request(tx);
+    await req.query(
+      `CREATE TABLE #SpiceBatch (
+        global_chart_id INT NOT NULL PRIMARY KEY,
+        spice FLOAT NOT NULL
+      )`
+    );
+    for (let i = 0; i < updates.length; i += BATCH) {
+      const chunk = updates.slice(i, i + BATCH);
+      const table = new sql.Table("#SpiceBatch");
+      table.create = false;
+      table.columns.add("global_chart_id", sql.Int, { nullable: false });
+      table.columns.add("spice", sql.Float, { nullable: false });
+      for (const u of chunk) {
+        table.rows.add(u.global_chart_id, u.spice);
+      }
+      await req.bulk(table);
     }
+    await req
+      .input("catalogId", catalogId)
+      .input("ts", spiceCalcTime)
+      .query(
+        `UPDATE c SET c.spice = b.spice, c.spice_calc_time = @ts
+         FROM Chart c
+         INNER JOIN #SpiceBatch b ON c.global_chart_id = b.global_chart_id
+         WHERE c.catalog_id = @catalogId`
+      );
+    await req.query(`DROP TABLE #SpiceBatch`);
     await tx.commit();
-    return n;
+    return updates.length;
   } catch (e) {
     await tx.rollback();
     throw e;

@@ -20,10 +20,7 @@ from sqlalchemy import bindparam
 from sqlalchemy import MetaData
 from sqlalchemy.engine import URL
 
-import numpy as np
-
 from db_types import Catalog, Chart, Player, Relationship, Score
-import scobility_lite
 
 # http://blog.pamelafox.org/2022/11/fastapi-on-azure-functions-with-azure.html
 # if os.getenv("FUNCTIONS_WORKER_RUNTIME"):
@@ -556,121 +553,6 @@ def _list_all_scores(catalog_name: str, entrant_id: int) -> Dict:
         }
     
 
-# Scobility logic surface
-def calc_scobility(catalog_name: str, scores: Dict) -> Dict:
-    # scores = {chart_id: score}
-
-    scobility_result = {
-        'entrant_id': None,
-        'scobility': None,
-        'timing_power': None,
-        'comfort_zone': None,
-        'scobility_calc_time': dt.isoformat(dt.utcnow()),
-        'score_qualities': None,
-        'message': None
-    }
-    try:
-        if catalog_name not in _CATALOGS:
-            return {
-                'status': False,
-                'message': f"Couldn't find {catalog_name} in scobility catalogs"
-            }
-        else:
-            catalog_id = _CATALOGS[catalog_name]['catalog_id']
-
-        if not _cache_spice(catalog_id):
-            return {
-                'status': False,
-                'message': f"Couldn't get spice ratings for scobility catalog {catalog_name}"
-            }
-
-        catalog = TypeAdapter(Catalog).validate_python(_CATALOGS[catalog_name])
-        scores_dict = {soft_int(k): v for k, v in scores.items()}
-        spices_dict = {c.chart_id: c.spice for c in _SPICES[catalog_id]}
-        scobility_result = scobility_lite.calc_player_scobility(catalog, scores_dict, spices_dict)
-        return {
-            'status': True,
-            'data': scobility_result,
-            'message': scobility_result.get('message',  f"Calculated scobility catalog from {len(scores)} scores")
-        }
-
-    except Exception as e:
-        print(e)
-        return {
-            'status': False,
-            'message': "Couldn't connect to DB"
-        }
-    
-
-def derive_target_score(catalog_name: str, entrant_info: Union[int, Dict], chart_q: Union[int, str]) -> Dict:    # entrant_info could be either:
-    # - an entrant ID
-    # - a dict of {chart_id: score}
-    # chart_q could be either:
-    # - a specific chart ID/hash
-    # - "all", "id", or "hash", in which case calculate all the target scores for this player
-    if isinstance(soft_int(entrant_info), int):
-        result_player = _lookup_player(catalog_name, entrant_info)
-        if 'data' in result_player:
-            players = {result_player['data']['entrant_id']: result_player['data']}
-    else:
-        result_player = calc_scobility(catalog_name, entrant_info)
-        if 'data' in result_player:
-            players = result_player['data']
-    if result_player['status'] == False:
-        return {
-            'status': False,
-            'message': "Couldn't derive target score: " + result_player['message']
-        }
-        
-    cx = cid(chart_q)
-    if isinstance(cx, int):
-        print(f"Looking for chart #{chart_q} in {catalog_name} catalog...")
-        result_spices = _lookup_spice(catalog_name, cx)
-        if 'data' in result_spices:
-            spices = {result_spices['data']['chart_id']: result_spices['data']}
-    elif chart_q.lower() in ["all", "id", "hash"]:
-        print(f"Listing all charts in {catalog_name} catalog...")
-        result_spices = _list_all_spice(catalog_name)
-        if 'data' in result_spices:
-            spices = result_spices['data']
-    else:
-        print(f"Looking for chart hash={chart_q} in {catalog_name} catalog...")
-        result_spices = _lookup_spice(catalog_name, cx)
-        if 'data' in result_spices:
-            spices = {result_spices['data']['hash']: result_spices['data']}
-    if result_spices['status'] == False:
-        return {
-            'status': False,
-            'message': "Couldn't derive target score: " + result_spices['message']
-        }
-    
-    if len(spices) * len(players) > _TOO_MANY_THINGS:
-        return {
-            'status': False,
-            'message': f"Exceeded request limit (requested {len(players)} targets on {len(spices)} charts, limit is {_TOO_MANY_THINGS})"
-        }
-    
-    catalog = TypeAdapter(Catalog).validate_python(_CATALOGS[catalog_name])
-    
-    target_scores = {}
-    for p in players.values():
-        player = Player(**p,
-            performance_id=-1,
-            catalog_id=-1,
-            groovestats_id=-1,
-            boogiestats_id=-1,
-            name=""
-            )
-        targets = scobility_lite.calc_target_score(catalog, player, spices)
-        target_scores[p['entrant_id']] = targets
-    
-    return {
-        'status': True,
-        'data': target_scores,
-        'message': f"Derived target scores for {len(players)} players on {len(spices)} spice ratings"
-    }
-
-
 ## API layer
 
 # Heartbeat
@@ -730,53 +612,40 @@ def get_chart_detail(catalog_name: str, chart_q: str, chart_detail: str) -> JSON
     return get_chart(catalog_name, chart_q, chart_detail)
 
 
-# Retrieve cached scobility for a specific entrant ID
+def _gone_player_api() -> JSONResponse:
+    return JSONResponse(
+        content={
+            "status": False,
+            "message": "Player scobility and target scores are handled by the scobility frontend."
+        },
+        status_code=410,
+    )
+    
+
 @api.get("/catalog/{catalog_name}/scobility/{entrant_id}")
-def get_scobility_cached(catalog_name: str, entrant_id: int) -> JSONResponse:
-    result = _lookup_catalog(catalog_name)
-    if 'data' not in result:    
-        return {
-            'status': False,
-            'message': f"Couldn't find {catalog_name} in scobility catalogs"
-        }
-    
-    try:
-        print(f"Looking for player #{entrant_id} in {catalog_name} catalog...")
-        result = _lookup_player(catalog_name, entrant_id)
+def get_scobility_cached_gone(catalog_name: str, entrant_id: int) -> JSONResponse:
+    return _gone_player_api()
 
-        return JSONResponse(content=result,
-            status_code=result.get('status') and 200 or 404)
-    except Exception as e:
-        print(e)
-        return {
-            'status': False,
-            'message': "Something unexpected happened"
-        }
-    
 
-# Retrieve cached scobility for all entrants in a catalog
 @api.get("/catalog/{catalog_name}/scobility")
-def get_scobility_all(catalog_name: str) -> JSONResponse:
-    result = _lookup_catalog(catalog_name)
-    if 'data' not in result:    
-        return {
-            'status': False,
-            'message': f"Couldn't find {catalog_name} in scobility catalogs"
-        }
-    
-    try:
-        print(f"Listing scobility for all players in {catalog_name} catalog...")
-        result = _list_all_players(catalog_name)
+def get_scobility_all_gone(catalog_name: str) -> JSONResponse:
+    return _gone_player_api()
 
-        return JSONResponse(content=result,
-            status_code=result.get('status') and 200 or 404)
-    except Exception as e:
-        print(e)
-        return {
-            'status': False,
-            'message': "Something unexpected happened"
-        }
-    
+
+@api.post("/catalog/{catalog_name}/scobility")
+def post_scobility_gone(catalog_name: str) -> JSONResponse:
+    return _gone_player_api()
+
+
+@api.get("/catalog/{catalog_name}/target/{entrant_id}/chart/{chart_q}")
+def get_target_gone(catalog_name: str, entrant_id: int, chart_q: str) -> JSONResponse:
+    return _gone_player_api()
+
+
+@api.get("/catalog/{catalog_name}/target/{entrant_id}")
+def get_all_targets_gone(catalog_name: str, entrant_id: int) -> JSONResponse:
+    return _gone_player_api()
+
 
 # Retrieve player names for all entrants in a catalog
 @api.get("/catalog/{catalog_name}/players")
@@ -801,81 +670,6 @@ def get_players(catalog_name: str) -> JSONResponse:
             'message': "Something unexpected happened"
         }
     
-
-class ScobilityRequest(BaseModel):
-    scores: Dict
-
-# Calculate scobility for an arbitrary list of high scores
-@api.post("/catalog/{catalog_name}/scobility")
-def get_scobility_arbitrary(catalog_name: str, reqs: ScobilityRequest) -> JSONResponse:
-    result = _lookup_catalog(catalog_name)
-    if 'data' not in result:    
-        return {
-            'status': False,
-            'message': f"Couldn't find {catalog_name} in scobility catalogs"
-        }
-    
-    try:
-        print(f"Calculating scobility for {len(reqs.scores)} scores provided in {catalog_name} catalog...")
-        result = calc_scobility(catalog_name, reqs.scores)
-        return JSONResponse(content=result,
-            status_code=result.get('status') and 200 or 404)
-    except Exception as e:
-        print(e)
-        return {
-            'status': False,
-            'message': "Something unexpected happened"
-        }
-
-
-# Calculate target score for a particular player,
-# on a chart with a particular chart ID or hash - or for all charts
-@api.get("/catalog/{catalog_name}/target/{entrant_id}/chart/{chart_q}")
-def get_target_score(catalog_name: str, entrant_id: int, chart_q: str) -> JSONResponse:
-    result = _lookup_catalog(catalog_name)
-    if 'data' not in result:    
-        return {
-            'status': False,
-            'message': f"Couldn't find {catalog_name} in scobility catalogs"
-        }
-    
-    try:
-        print(f"Targeting score for player #{entrant_id} on chart {chart_q} in {catalog_name} catalog...")
-        result = derive_target_score(catalog_name, entrant_id, chart_q)
-
-        return JSONResponse(content=result,
-            status_code=result.get('status') and 200 or 404)
-    except Exception as e:
-        print(e)
-        return {
-            'status': False,
-            'message': "Something unexpected happened"
-        }
-
-
-# Calculate target scores for a particular player on all charts
-@api.get("/catalog/{catalog_name}/target/{entrant_id}")
-def get_all_targets(catalog_name: str, entrant_id: int) -> JSONResponse:
-    result = _lookup_catalog(catalog_name)
-    if 'data' not in result:    
-        return {
-            'status': False,
-            'message': f"Couldn't find {catalog_name} in scobility catalogs"
-        }
-    
-    try:
-        print(f"Targeting scores for player #{entrant_id} on all charts in {catalog_name} catalog...")
-        result = derive_target_score(catalog_name, entrant_id, 'all')
-
-        return JSONResponse(content=result,
-            status_code=result.get('status') and 200 or 404)
-    except Exception as e:
-        print(e)
-        return {
-            'status': False,
-            'message': "Something unexpected happened"
-        }
-
 
 # Retrieve a player's score for a particular chart ID or hash
 @api.get("/catalog/{catalog_name}/score/{entrant_id}/chart/{chart_q}")

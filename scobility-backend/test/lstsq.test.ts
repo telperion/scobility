@@ -15,7 +15,6 @@ describe("lstsq", () => {
     const b = new Float64Array(y);
     const ww = new Float64Array(w);
     const coefs = lstsq(a, b, ww);
-    expect(coefs[0]).toBeGreaterThan(1.0);
-    expect(coefs[0]).toBeLessThan(1.15);
+    expect(coefs[0]).toBeCloseTo(1.047, 12);
   });
 });

@@ -26,10 +26,11 @@ function buildMiniTournament(): Tournament {
   const s3 = mkSong(3);
 
   const common = [101, 102, 103, 104, 105, 106, 107];
-  for (const e of common) {
-    s1.scores.set(e, { s_id: 1, e_id: e, plays: 1, last_played: null, clear: 1, value: 0.2 });
-    s2.scores.set(e, { s_id: 2, e_id: e, plays: 1, last_played: null, clear: 1, value: 0.15 });
-    s3.scores.set(e, { s_id: 3, e_id: e, plays: 1, last_played: null, clear: 1, value: 0.1 });
+  for (const i of common) {
+    const jitter = (i % 5) * 1e-5;
+    s1.scores.set(i, { s_id: 1, e_id: i, plays: 1, last_played: null, clear: 1, value: 0.2 + jitter });
+    s2.scores.set(i, { s_id: 2, e_id: i, plays: 1, last_played: null, clear: 1, value: 0.15 + jitter * 0.9 });
+    s3.scores.set(i, { s_id: 3, e_id: i, plays: 1, last_played: null, clear: 1, value: 0.1 + jitter * 0.8 });
   }
 
   setupRelationships(t);
