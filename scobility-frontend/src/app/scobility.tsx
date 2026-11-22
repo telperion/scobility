@@ -2,11 +2,14 @@
 // :chili_pepper:
 
 import fetch from "node-fetch";
+import { setCatalogParams as registerCatalogMeta } from "./catalogPerfect";
 
 /** Catalog params from GET /catalog/{name}; drives score quality and targets. */
 export interface LoadedCatalogMeta {
   catalog_id: number;
   name: string;
+  active?: boolean;
+  last_update?: string | null;
   perfect_offset: number;
   perfect_score: number | null;
 }
@@ -203,8 +206,8 @@ export interface LoadedChart {
   value: number;
   value_scoring: number;
   value_passing: number;
-  spice: number;
-  spice_calc_time: Date | string;
+  spice: number | null;
+  spice_calc_time: Date | string | null;
 }
 
 export interface LoadedScore {
@@ -355,6 +358,7 @@ async function loadCatalogMetadata(catalog: string): Promise<boolean> {
     };
     if (body.status && body.data?.perfect_offset != null) {
       setCatalogParams(body.data);
+      registerCatalogMeta(body.data);
       return true;
     }
   } catch (error) {
@@ -441,7 +445,10 @@ function transformLoadedScore(
   charts: Map<string, LoadedChart>,
   players: Map<string, LoadedPlayer>,
 ): ProcessedScore | null {
-  const chart_info = charts.get(row.hash);
+  const chart_info =
+    charts.get(row.hash) ??
+    charts.get(String(row.chart_id)) ??
+    charts.get(row.chart_id.toString());
   if (!chart_info) {
     console.error(
       `Couldn't find chart ID matching ${row.hash} in current catalog`

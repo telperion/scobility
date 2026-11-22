@@ -2,6 +2,8 @@
 export interface LoadedCatalogMeta {
   catalog_id: number;
   name: string;
+  active?: boolean;
+  last_update?: string | null;
   perfect_offset: number;
   perfect_score: number | null;
 }
@@ -45,6 +47,10 @@ export function catalogPerfectOffsetSum(): number {
 
 export function catalogPerfectScore(): number | null {
   return requireCatalogMeta().perfect_score;
+}
+
+export function catalogLastUpdate(): string | null {
+  return requireCatalogMeta().last_update ?? null;
 }
 
 /**

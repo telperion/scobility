@@ -41,10 +41,16 @@ With `--echo`, writes `spice_ranking_<catalog>_<style>.log` (Python `view_spice_
 
 Set `SCOBILITY_*` in `.env`. Destructive ingest requires `--target production --allow-production`.
 
+Large catalogs delete with `DELETE TOP` batches then bulk insert. Default SQL request timeout is **unlimited** (`SCOBILITY_REQUEST_TIMEOUT_MS=0`); set a cap only if you want one.
+
+**Credentials:** login failures fail in seconds (`ELOGIN` / “Login failed”). `ETIMEOUT` after loading JSON means the server accepted the connection—usually one huge `DELETE` or bulk batch, not bad passwords.
+
 ```bash
 npm run ingest-catalog -- --target production --allow-production --catalog ITL2026 --source json --path ../scobility_itl2026.json
 npm run recalc-spice -- --target production --catalog ITL2026
 ```
+
+After **production ingest**, restart the Azure Function app (or wait for a cold start) so `function_app.py` reloads in-memory chart/score caches. Until then the site may show empty spice or stale data. Charts load with `spice: null` until `recalc-spice` runs.
 
 ## Tests
 

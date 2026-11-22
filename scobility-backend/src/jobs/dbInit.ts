@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import sql from "mssql";
 import type { DbTarget } from "../types/db.js";
-import { resolveProfile, withPool } from "../db/connection.js";
+import { mssqlPoolConfig, resolveProfile, withPool } from "../db/connection.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sqlRoot = path.join(__dirname, "..", "..", "sql");
@@ -26,16 +26,9 @@ export async function runDbInit(target: DbTarget, force = false): Promise<void> 
 
   if (target === "local") {
     const profile = resolveProfile("local");
-    const master = await sql.connect({
-      server: profile.server.split(",")[0],
-      port: profile.server.includes(",")
-        ? parseInt(profile.server.split(",")[1], 10)
-        : undefined,
-      database: "master",
-      user: profile.user,
-      password: profile.password,
-      options: profile.options,
-    });
+    const master = await sql.connect(
+      mssqlPoolConfig(profile, "master")
+    );
     try {
       const dbName = profile.database.replace(/]/g, "]]");
       await master.request().query(

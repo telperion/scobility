@@ -18,6 +18,7 @@ import { Select, Switch, Table, ConfigProvider, theme } from "antd";
 import { Tooltip as TooltipElement } from "antd";
 import type { TableColumnsType, TableProps } from "antd";
 
+import { catalogLastUpdate } from "./catalogPerfect";
 import {
   ScobilityStats,
   loadPlayerData_test,
@@ -392,17 +393,30 @@ export function ScobilityHome({
   }
 
   const getLastUpdateDate = (chart_data: LoadedChart[]) => {
-    if (chart_data.length == 0) {
-      return null;
+    const spiceTimes = chart_data
+      .map((row) => row.spice_calc_time)
+      .filter((t): t is Date | string => t != null)
+      .map((t) => Date.parse(String(t)));
+    if (spiceTimes.length > 0) {
+      const latest = Math.max(...spiceTimes);
+      return new Date(latest).toLocaleString(undefined, {
+        timeZoneName: "short",
+      });
     }
-    else {
-      return new Date(chart_data.map(
-        (row) => (Date.parse(row.spice_calc_time.toLocaleString()+"Z"))
-      ).reduce(
-        (earliest, d) => (Math.min(d, earliest)), Date.now()
-      )).toLocaleString(undefined, {timeZoneName: "short"})
+    try {
+      const catalogUpdated = catalogLastUpdate();
+      if (catalogUpdated) {
+        return (
+          new Date(catalogUpdated).toLocaleString(undefined, {
+            timeZoneName: "short",
+          }) + " (ingest; run spice recalc)"
+        );
+      }
+    } catch {
+      /* catalog metadata not loaded yet */
     }
-  }
+    return chart_data.length > 0 ? "spice not calculated yet" : null;
+  };
 
   const updateScoreData = async () => {
     if (selectedPlayerID > 0) {

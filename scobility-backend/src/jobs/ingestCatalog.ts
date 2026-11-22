@@ -1,5 +1,5 @@
 import type { DbTarget } from "../types/db.js";
-import { withPool } from "../db/connection.js";
+import { requestTimeoutMs, withPool } from "../db/connection.js";
 import { getCatalogByName } from "../db/catalog.js";
 import { replaceCatalogData } from "../db/replaceCatalogData.js";
 import { mapIngestToDbRows } from "../ingest/mapToDbRows.js";
@@ -36,8 +36,16 @@ export async function runIngestCatalog(opts: IngestCatalogOptions): Promise<void
     data = await loadTourneyJson(opts.path);
   }
 
+  const timeoutMs = requestTimeoutMs();
+  console.log(
+    `SQL request timeout: ${timeoutMs === 0 ? "none" : `${timeoutMs} ms`}`
+  );
+
   await withPool(opts.target, async (pool) => {
     const catalog = await getCatalogByName(pool, opts.catalog);
+    console.log(
+      `Connected: catalog "${catalog.name}" (id ${catalog.catalog_id})`
+    );
     const rows = mapIngestToDbRows(catalog.catalog_id, opts.catalog, data);
     console.log(
       `Inserting ${rows.charts.length} charts, ${rows.players.length} players, ${rows.scores.length} scores...`
